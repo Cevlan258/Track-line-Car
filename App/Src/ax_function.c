@@ -12,7 +12,7 @@ void AX_FUN_Ls1(void)
   ax_ccd_offset = (int16_t)bias;
 
   move_w = -ax_ccd_kp * bias * 0.1f - ax_ccd_kd * (bias - bias_last) * 0.1f;
-  R_Vel.TG_IW = (int16_t)(0.01f * move_w * ax_ccd_velocity);
+  R_Vel.TG_IW = (int16_t)move_w;
 
   bias_last = bias;
 }

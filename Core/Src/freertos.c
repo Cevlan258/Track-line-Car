@@ -25,6 +25,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "app_state.h"
 #include "ax_robot.h"
 
 /* USER CODE END Includes */
@@ -61,6 +62,13 @@ const osThreadAttr_t robotTask_attributes = {
   .name = "robotTask",
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for appTask */
+osThreadId_t appTaskHandle;
+const osThreadAttr_t appTask_attributes = {
+  .name = "appTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityBelowNormal,
 };
 
 /* Private function prototypes -----------------------------------------------*/
@@ -104,6 +112,7 @@ void MX_FREERTOS_Init(void) {
 
   /* USER CODE BEGIN RTOS_THREADS */
   robotTaskHandle = osThreadNew(Robot_Task, NULL, &robotTask_attributes);
+  appTaskHandle = osThreadNew(AppState_Task, NULL, &appTask_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */

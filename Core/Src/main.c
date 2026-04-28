@@ -34,6 +34,7 @@
 #include "ax_key.h"
 #include "ax_led.h"
 #include "ax_motor.h"
+#include "ax_servo.h"
 #include "ax_vin.h"
 
 /* USER CODE END Includes */
@@ -106,6 +107,7 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM3_Init();
   MX_TIM4_Init();
+  MX_TIM8_Init();
   MX_UART4_Init();
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
@@ -115,6 +117,7 @@ int main(void)
   AX_BEEP_Init();
   AX_KEY_Init();
   AX_MOTOR_Init();
+  AX_SERVO_Init();
   AX_ENCODER_A_Init();
   AX_ENCODER_B_Init();
   AX_VIN_Init();

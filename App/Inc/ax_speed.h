@@ -5,5 +5,6 @@
 
 int16_t AX_SPEED_PidCtlA(float spd_target, float spd_current);
 int16_t AX_SPEED_PidCtlB(float spd_target, float spd_current);
+void AX_SPEED_Reset(void);
 
 #endif

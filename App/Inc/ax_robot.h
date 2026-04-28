@@ -58,7 +58,10 @@ extern int16_t ax_ccd_offset;
 extern int16_t ax_ccd_velocity;
 extern int16_t ax_ccd_kp;
 extern int16_t ax_ccd_kd;
+extern int32_t ax_robot_distance_mm;
 
 void Robot_Task(void *parameter);
+void AX_ROBOT_ResetDistance(void);
+int32_t AX_ROBOT_GetDistanceMm(void);
 
 #endif

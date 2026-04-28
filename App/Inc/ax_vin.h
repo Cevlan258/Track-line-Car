@@ -5,5 +5,6 @@
 
 void AX_VIN_Init(void);
 uint16_t AX_VIN_GetVol_X100(void);
+uint8_t AX_VIN_GetPercent(uint16_t vin_x100);
 
 #endif

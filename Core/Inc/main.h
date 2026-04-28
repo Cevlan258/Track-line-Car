@@ -81,6 +81,8 @@ void Error_Handler(void);
 #define CCD_CLK_GPIO_Port GPIOB
 #define LED_GREEN_Pin GPIO_PIN_8
 #define LED_GREEN_GPIO_Port GPIOA
+#define SERVO_PWM_Pin GPIO_PIN_7
+#define SERVO_PWM_GPIO_Port GPIOC
 
 /* USER CODE BEGIN Private defines */
 

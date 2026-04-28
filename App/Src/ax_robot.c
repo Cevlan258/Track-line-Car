@@ -1,4 +1,5 @@
 #include "ax_robot.h"
+#include "app_state.h"
 #include "ax_function.h"
 #include "ax_kinematics.h"
 
@@ -18,6 +19,7 @@ int16_t ax_ccd_offset;
 int16_t ax_ccd_velocity = 500;
 int16_t ax_ccd_kp = 80;
 int16_t ax_ccd_kd = 50;
+int32_t ax_robot_distance_mm;
 
 void Robot_Task(void *parameter)
 {
@@ -30,7 +32,7 @@ void Robot_Task(void *parameter)
   {
     vTaskDelayUntil(&previous_wake_time, time_increment);
 
-    if (ax_control_mode == CTL_FN1)
+    if ((ax_control_mode == CTL_FN1) && (AppState_IsLineControlEnabled() != 0U))
     {
       AX_FUN_Ls1();
     }

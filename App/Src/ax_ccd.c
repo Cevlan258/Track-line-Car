@@ -1,6 +1,10 @@
 #include "ax_ccd.h"
+#include "app_config.h"
 #include "adc.h"
 #include "ax_delay.h"
+
+static uint16_t ccd_last_frame[128];
+static AX_CCD_LineInfo ccd_line_info;
 
 static void ccd_delay_us(void)
 {
@@ -57,26 +61,26 @@ void AX_CCD_GetData(uint16_t *pbuf)
 int16_t AX_CCD_GetOffset(void)
 {
   uint8_t i;
-  static uint16_t ccd[128];
   uint16_t ccd_min;
   uint16_t ccd_max;
   uint16_t ccd_threshold;
   uint16_t ccd_left = 0;
   uint16_t ccd_right = 127;
+  uint16_t black_count = 0;
 
-  AX_CCD_GetData(ccd);
+  AX_CCD_GetData(ccd_last_frame);
 
-  ccd_min = ccd[0];
-  ccd_max = ccd[0];
+  ccd_min = ccd_last_frame[0];
+  ccd_max = ccd_last_frame[0];
   for (i = 0; i < 128; i++)
   {
-    if (ccd_min > ccd[i])
+    if (ccd_min > ccd_last_frame[i])
     {
-      ccd_min = ccd[i];
+      ccd_min = ccd_last_frame[i];
     }
-    if (ccd_max < ccd[i])
+    if (ccd_max < ccd_last_frame[i])
     {
-      ccd_max = ccd[i];
+      ccd_max = ccd_last_frame[i];
     }
   }
 
@@ -84,7 +88,15 @@ int16_t AX_CCD_GetOffset(void)
 
   for (i = 0; i < 128; i++)
   {
-    if (ccd[i] < ccd_threshold)
+    if (ccd_last_frame[i] < ccd_threshold)
+    {
+      black_count++;
+    }
+  }
+
+  for (i = 0; i < 128; i++)
+  {
+    if (ccd_last_frame[i] < ccd_threshold)
     {
       ccd_left = i;
       break;
@@ -93,12 +105,30 @@ int16_t AX_CCD_GetOffset(void)
 
   for (i = 127; i > 0; i--)
   {
-    if (ccd[i] < ccd_threshold)
+    if (ccd_last_frame[i] < ccd_threshold)
     {
       ccd_right = i;
       break;
     }
   }
 
-  return (int16_t)(((int16_t)ccd_left + (int16_t)ccd_right) / 2 - 64);
+  ccd_line_info.offset = (int16_t)(((int16_t)ccd_left + (int16_t)ccd_right) / 2 - 64);
+  ccd_line_info.threshold = ccd_threshold;
+  ccd_line_info.black_count = black_count;
+  ccd_line_info.left_edge = ccd_left;
+  ccd_line_info.right_edge = ccd_right;
+  ccd_line_info.line_valid = ((black_count > 2U) && (black_count < 90U)) ? 1U : 0U;
+  ccd_line_info.marker_detected = (black_count >= APP_MARKER_BLACK_COUNT) ? 1U : 0U;
+
+  return ccd_line_info.offset;
+}
+
+const uint16_t *AX_CCD_GetLastFrame(void)
+{
+  return ccd_last_frame;
+}
+
+AX_CCD_LineInfo AX_CCD_GetLineInfo(void)
+{
+  return ccd_line_info;
 }

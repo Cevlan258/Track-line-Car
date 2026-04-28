@@ -44,6 +44,11 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+    App/Src/app_start.c
+    App/Src/app_state.c
+    App/Src/display_ssd1309.c
+    App/Src/lora.c
+    App/Src/radar.c
     App/Src/ax_beep.c
     App/Src/ax_ccd.c
     App/Src/ax_delay.c
@@ -54,6 +59,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/Src/ax_motor.c
     App/Src/ax_function.c
     App/Src/ax_robot.c
+    App/Src/ax_servo.c
     App/Src/ax_speed.c
     App/Src/ax_vin.c
 )
