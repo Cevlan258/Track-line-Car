@@ -1,55 +1,41 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file         stm32f1xx_hal_msp.c
-  * @brief        This file provides code for the MSP Initialization
-  *               and de-Initialization codes.
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2026 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
+  * 中文说明：本段为工程生成代码说明。
   */
 /* USER CODE END Header */
 
-/* Includes ------------------------------------------------------------------*/
+/* 包含文件 ------------------------------------------------------------------*/
 #include "main.h"
 /* USER CODE BEGIN Includes */
 
 /* USER CODE END Includes */
 
-/* Private typedef -----------------------------------------------------------*/
+/* 私有类型定义 --------------------------------------------------------------*/
 /* USER CODE BEGIN TD */
 
 /* USER CODE END TD */
 
-/* Private define ------------------------------------------------------------*/
+/* 私有宏定义 ----------------------------------------------------------------*/
 /* USER CODE BEGIN Define */
 
 /* USER CODE END Define */
 
-/* Private macro -------------------------------------------------------------*/
+/* 私有宏 --------------------------------------------------------------------*/
 /* USER CODE BEGIN Macro */
 
 /* USER CODE END Macro */
 
-/* Private variables ---------------------------------------------------------*/
+/* 私有变量 ------------------------------------------------------------------*/
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
 
-/* Private function prototypes -----------------------------------------------*/
+/* 私有函数声明 --------------------------------------------------------------*/
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
-/* External functions --------------------------------------------------------*/
+/* 外部函数 ------------------------------------------------------------------*/
 /* USER CODE BEGIN ExternalFunctions */
 
 /* USER CODE END ExternalFunctions */
@@ -58,7 +44,7 @@
 
 /* USER CODE END 0 */
 /**
-  * Initializes the Global MSP.
+  * 中文说明：本段为工程生成代码说明。
   */
 void HAL_MspInit(void)
 {
@@ -70,11 +56,12 @@ void HAL_MspInit(void)
   __HAL_RCC_AFIO_CLK_ENABLE();
   __HAL_RCC_PWR_CLK_ENABLE();
 
-  /* System interrupt init*/
-  /* PendSV_IRQn interrupt configuration */
+  /* 系统中断初始化 */
+  /* PendSV_IRQn 中断配置 */
   HAL_NVIC_SetPriority(PendSV_IRQn, 15, 0);
 
-  /** NOJTAG: JTAG-DP Disabled and SW-DP Enabled
+  /**
+  * 中文说明：本段为工程生成代码说明。
   */
   __HAL_AFIO_REMAP_SWJ_NOJTAG();
 

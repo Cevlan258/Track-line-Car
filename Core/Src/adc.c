@@ -1,23 +1,9 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file    adc.c
-  * @brief   This file provides code for the configuration
-  *          of the ADC instances.
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2026 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
+  * 中文说明：本段为工程生成代码说明。
   */
 /* USER CODE END Header */
-/* Includes ------------------------------------------------------------------*/
+/* 包含文件 ------------------------------------------------------------------*/
 #include "adc.h"
 
 /* USER CODE BEGIN 0 */
@@ -27,7 +13,7 @@
 ADC_HandleTypeDef hadc1;
 ADC_HandleTypeDef hadc2;
 
-/* ADC1 init function */
+/* ADC1 初始化函数 */
 void MX_ADC1_Init(void)
 {
 
@@ -41,7 +27,8 @@ void MX_ADC1_Init(void)
 
   /* USER CODE END ADC1_Init 1 */
 
-  /** Common config
+  /**
+  * 中文说明：本段为工程生成代码说明。
   */
   hadc1.Instance = ADC1;
   hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
@@ -55,7 +42,8 @@ void MX_ADC1_Init(void)
     Error_Handler();
   }
 
-  /** Configure Regular Channel
+  /**
+  * 中文说明：本段为工程生成代码说明。
   */
   sConfig.Channel = ADC_CHANNEL_1;
   sConfig.Rank = ADC_REGULAR_RANK_1;
@@ -69,7 +57,7 @@ void MX_ADC1_Init(void)
   /* USER CODE END ADC1_Init 2 */
 
 }
-/* ADC2 init function */
+/* ADC2 初始化函数 */
 void MX_ADC2_Init(void)
 {
 
@@ -83,7 +71,8 @@ void MX_ADC2_Init(void)
 
   /* USER CODE END ADC2_Init 1 */
 
-  /** Common config
+  /**
+  * 中文说明：本段为工程生成代码说明。
   */
   hadc2.Instance = ADC2;
   hadc2.Init.ScanConvMode = ADC_SCAN_DISABLE;
@@ -97,7 +86,8 @@ void MX_ADC2_Init(void)
     Error_Handler();
   }
 
-  /** Configure Regular Channel
+  /**
+  * 中文说明：本段为工程生成代码说明。
   */
   sConfig.Channel = ADC_CHANNEL_9;
   sConfig.Rank = ADC_REGULAR_RANK_1;
@@ -121,13 +111,13 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* adcHandle)
   /* USER CODE BEGIN ADC1_MspInit 0 */
 
   /* USER CODE END ADC1_MspInit 0 */
-    /* ADC1 clock enable */
+    /* ADC1 时钟使能 */
     __HAL_RCC_ADC1_CLK_ENABLE();
 
     __HAL_RCC_GPIOA_CLK_ENABLE();
-    /**ADC1 GPIO Configuration
-    PA1     ------> ADC1_IN1
-    */
+    /**
+  * 中文说明：本段为工程生成代码说明。
+  */
     GPIO_InitStruct.Pin = GPIO_PIN_1;
     GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
@@ -141,13 +131,13 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* adcHandle)
   /* USER CODE BEGIN ADC2_MspInit 0 */
 
   /* USER CODE END ADC2_MspInit 0 */
-    /* ADC2 clock enable */
+    /* ADC2 时钟使能 */
     __HAL_RCC_ADC2_CLK_ENABLE();
 
     __HAL_RCC_GPIOB_CLK_ENABLE();
-    /**ADC2 GPIO Configuration
-    PB1     ------> ADC2_IN9
-    */
+    /**
+  * 中文说明：本段为工程生成代码说明。
+  */
     GPIO_InitStruct.Pin = GPIO_PIN_1;
     GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
@@ -166,12 +156,12 @@ void HAL_ADC_MspDeInit(ADC_HandleTypeDef* adcHandle)
   /* USER CODE BEGIN ADC1_MspDeInit 0 */
 
   /* USER CODE END ADC1_MspDeInit 0 */
-    /* Peripheral clock disable */
+    /* 外设时钟关闭 */
     __HAL_RCC_ADC1_CLK_DISABLE();
 
-    /**ADC1 GPIO Configuration
-    PA1     ------> ADC1_IN1
-    */
+    /**
+  * 中文说明：本段为工程生成代码说明。
+  */
     HAL_GPIO_DeInit(GPIOA, GPIO_PIN_1);
 
   /* USER CODE BEGIN ADC1_MspDeInit 1 */
@@ -183,12 +173,12 @@ void HAL_ADC_MspDeInit(ADC_HandleTypeDef* adcHandle)
   /* USER CODE BEGIN ADC2_MspDeInit 0 */
 
   /* USER CODE END ADC2_MspDeInit 0 */
-    /* Peripheral clock disable */
+    /* 外设时钟关闭 */
     __HAL_RCC_ADC2_CLK_DISABLE();
 
-    /**ADC2 GPIO Configuration
-    PB1     ------> ADC2_IN9
-    */
+    /**
+  * 中文说明：本段为工程生成代码说明。
+  */
     HAL_GPIO_DeInit(GPIOB, GPIO_PIN_1);
 
   /* USER CODE BEGIN ADC2_MspDeInit 1 */

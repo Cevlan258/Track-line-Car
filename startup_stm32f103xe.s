@@ -1,30 +1,5 @@
 /**
-  *************** (C) COPYRIGHT 2017 STMicroelectronics ************************
-  * @file      startup_stm32f103xe.s
-  * @author    MCD Application Team
-  * @brief     STM32F103xE Devices vector table for Atollic toolchain.
-  *            This module performs:
-  *                - Set the initial SP
-  *                - Set the initial PC == Reset_Handler,
-  *                - Set the vector table entries with the exceptions ISR address
-  *                - Configure the clock system   
-  *                - Configure external SRAM mounted on STM3210E-EVAL board
-  *                  to be used as data memory (optional, to be enabled by user)
-  *                - Branches to main in the C library (which eventually
-  *                  calls main()).
-  *            After Reset the Cortex-M3 processor is in Thread mode,
-  *            priority is Privileged, and the Stack is set to Main.
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2017-2021 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
+  * 中文说明：本段为工程生成代码说明。
   */
 
   .syntax unified
@@ -35,37 +10,31 @@
 .global g_pfnVectors
 .global Default_Handler
 
-/* start address for the initialization values of the .data section.
-defined in linker script */
+/* .data 段初始值起始地址，由链接脚本定义 */
 .word _sidata
-/* start address for the .data section. defined in linker script */
+/* .data 段起始地址，由链接脚本定义 */
 .word _sdata
-/* end address for the .data section. defined in linker script */
+/* .data 段结束地址，由链接脚本定义 */
 .word _edata
-/* start address for the .bss section. defined in linker script */
+/* .bss 段起始地址，由链接脚本定义 */
 .word _sbss
-/* end address for the .bss section. defined in linker script */
+/* .bss 段结束地址，由链接脚本定义 */
 .word _ebss
 
 .equ  BootRAM,        0xF1E0F85F
 /**
- * @brief  This is the code that gets called when the processor first
- *          starts execution following a reset event. Only the absolutely
- *          necessary set is performed, after which the application
- *          supplied main() routine is called.
- * @param  None
- * @retval : None
-*/
+  * 中文说明：本段为工程生成代码说明。
+  */
 
   .section .text.Reset_Handler
   .weak Reset_Handler
   .type Reset_Handler, %function
 Reset_Handler:
 
-/* Call the clock system initialization function.*/
+/* 调用时钟系统初始化函数 */
     bl  SystemInit
 
-/* Copy the data segment initializers from flash to SRAM */
+/* 将数据段初始值从 FLASH 复制到 SRAM */
   ldr r0, =_sdata
   ldr r1, =_edata
   ldr r2, =_sidata
@@ -82,7 +51,7 @@ LoopCopyDataInit:
   cmp r4, r1
   bcc CopyDataInit
   
-/* Zero fill the bss segment. */
+/* 将 bss 段清零。 */
   ldr r2, =_sbss
   ldr r4, =_ebss
   movs r3, #0
@@ -96,33 +65,24 @@ LoopFillZerobss:
   cmp r2, r4
   bcc FillZerobss
 
-/* Call static constructors */
+/* 调用静态构造函数 */
     bl __libc_init_array
-/* Call the application's entry point.*/
+/* 调用应用入口点。*/
   bl main
   bx lr
 .size Reset_Handler, .-Reset_Handler
 
 /**
- * @brief  This is the code that gets called when the processor receives an
- *         unexpected interrupt.  This simply enters an infinite loop, preserving
- *         the system state for examination by a debugger.
- *
- * @param  None
- * @retval : None
-*/
+  * 中文说明：本段为工程生成代码说明。
+  */
     .section .text.Default_Handler,"ax",%progbits
 Default_Handler:
 Infinite_Loop:
   b Infinite_Loop
   .size Default_Handler, .-Default_Handler
-/******************************************************************************
-*
-* The minimal vector table for a Cortex M3.  Note that the proper constructs
-* must be placed on this to ensure that it ends up at physical address
-* 0x0000.0000.
-*
-******************************************************************************/
+/**
+  * 中文说明：本段为工程生成代码说明。
+  */
   .section .isr_vector,"a",%progbits
   .type g_pfnVectors, %object
   .size g_pfnVectors, .-g_pfnVectors
@@ -250,16 +210,12 @@ g_pfnVectors:
   .word 0
   .word 0
   .word 0
-  .word BootRAM       /* @0x1E0. This is for boot in RAM mode for
-                         STM32F10x High Density devices. */
+  .word BootRAM       /* @0x1E0. 这是用于 RAM 启动模式的
+                         适配 STM32F10x 大容量器件。 */
 
-/*******************************************************************************
-*
-* Provide weak aliases for each Exception handler to the Default_Handler.
-* As they are weak aliases, any function with the same name will override
-* this definition.
-*
-*******************************************************************************/
+/**
+  * 中文说明：本段为工程生成代码说明。
+  */
 
   .weak NMI_Handler
   .thumb_set NMI_Handler,Default_Handler
@@ -467,4 +423,3 @@ g_pfnVectors:
 
   .weak DMA2_Channel4_5_IRQHandler
   .thumb_set DMA2_Channel4_5_IRQHandler,Default_Handler
-

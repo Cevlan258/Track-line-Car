@@ -278,6 +278,64 @@ void Display_ShowLineSensor(const uint16_t *frame, const AX_CCD_LineInfo *info, 
   fb_flush();
 }
 
+void Display_ShowLineGate(const uint16_t *frame, const AX_CCD_LineInfo *info, const RadarSample *sample, const char *state, uint8_t gate_count, const char *gate_state, uint16_t gate_score, uint16_t vin_x100, uint8_t battery_percent)
+{
+  char line[18];
+  uint16_t radar_distance = 0;
+
+  fb_clear();
+  fb_text(0, 0, state);
+  (void)snprintf(line, sizeof(line), "%3u%%", battery_percent);
+  fb_text(108, 0, line);
+
+  if ((sample != NULL) && (sample->valid != 0U))
+  {
+    radar_distance = sample->detect_distance_cm;
+  }
+  (void)snprintf(line, sizeof(line), "D%03u E%03u", radar_distance, gate_score);
+  fb_text(0, 8, line);
+  (void)snprintf(line, sizeof(line), "G%u %s", gate_count, gate_state);
+  fb_text(76, 8, line);
+
+  if ((frame != NULL) && (info != NULL))
+  {
+    fb_hline(10, 117, 42);
+    fb_vline(64, 22, 62);
+
+    if (info->line_valid != 0U)
+    {
+      const uint8_t line_center = (uint8_t)(64 + info->offset);
+      const uint8_t marker_l4 = (line_center > 4U) ? (uint8_t)(line_center - 4U) : 0U;
+      const uint8_t marker_l3 = (line_center > 3U) ? (uint8_t)(line_center - 3U) : 0U;
+      const uint8_t marker_l2 = (line_center > 2U) ? (uint8_t)(line_center - 2U) : 0U;
+      const uint8_t marker_l1 = (line_center > 1U) ? (uint8_t)(line_center - 1U) : 0U;
+      const uint8_t marker_r4 = (line_center < 123U) ? (uint8_t)(line_center + 4U) : 127U;
+      const uint8_t marker_r3 = (line_center < 124U) ? (uint8_t)(line_center + 3U) : 127U;
+      const uint8_t marker_r2 = (line_center < 125U) ? (uint8_t)(line_center + 2U) : 127U;
+      const uint8_t marker_r1 = (line_center < 126U) ? (uint8_t)(line_center + 1U) : 127U;
+      fb_hline(marker_l4, marker_r4, 24);
+      fb_hline(marker_l3, marker_r3, 25);
+      fb_hline(marker_l2, marker_r2, 26);
+      fb_hline(marker_l1, marker_r1, 27);
+      fb_pixel(line_center, 28, 1);
+      fb_vline(line_center, 30, 62);
+      fb_hline(info->left_edge, info->right_edge, 56);
+      fb_hline(info->left_edge, info->right_edge, 57);
+    }
+    else
+    {
+      fb_text(48, 28, "NO LINE");
+    }
+
+    (void)snprintf(line, sizeof(line), "O%03d B%03u", info->offset, info->black_count);
+    fb_text(0, 16, line);
+    (void)snprintf(line, sizeof(line), "%02u.%01uV", vin_x100 / 100U, (vin_x100 % 100U) / 10U);
+    fb_text(104, 16, line);
+  }
+
+  fb_flush();
+}
+
 void Display_ShowRadar(const RadarSample *sample, RadarSide side, const char *state)
 {
   char line[18];

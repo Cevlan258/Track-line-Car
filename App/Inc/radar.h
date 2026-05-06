@@ -24,5 +24,6 @@ typedef struct
 void Radar_Init(void);
 void Radar_TaskPoll(void);
 RadarSample Radar_GetSample(void);
+void Radar_UartRxCpltCallback(UART_HandleTypeDef *huart);
 
 #endif

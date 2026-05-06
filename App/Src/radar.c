@@ -179,7 +179,7 @@ RadarSample Radar_GetSample(void)
   return current_sample;
 }
 
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+void Radar_UartRxCpltCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == UART4)
   {

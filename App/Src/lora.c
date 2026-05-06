@@ -1,4 +1,5 @@
 #include "lora.h"
+#include "app_time.h"
 #include "app_config.h"
 #include "usart.h"
 #include <stdio.h>
@@ -7,12 +8,14 @@
 #define LORA_BUSY_POLL_MS 2U
 #define LORA_READY_TIMEOUT_MS 200U
 #define LORA_TX_DONE_TIMEOUT_MS 500U
+#define LORA_MODE_SWITCH_TIMEOUT_MS 1000U
+#define LORA_HMODE_UART_LORA "AT+HMODE=1"
 
 static HAL_StatusTypeDef lora_wait_ready(uint32_t timeout_ms)
 {
   const uint32_t start = HAL_GetTick();
 
-  while (HAL_GPIO_ReadPin(LORA_AUX_GPIO_Port, LORA_AUX_Pin) == GPIO_PIN_SET)
+  while (HAL_GPIO_ReadPin(LORA_AUX_GPIO_Port, LORA_AUX_Pin) == GPIO_PIN_RESET)
   {
     if ((HAL_GetTick() - start) >= timeout_ms)
     {
@@ -24,25 +27,37 @@ static HAL_StatusTypeDef lora_wait_ready(uint32_t timeout_ms)
   return HAL_OK;
 }
 
+static void lora_enter_uart_lora_mode(void)
+{
+  (void)lora_wait_ready(LORA_READY_TIMEOUT_MS);
+  (void)HAL_UART_Transmit(&huart2,
+                          (uint8_t *)LORA_HMODE_UART_LORA,
+                          (uint16_t)(sizeof(LORA_HMODE_UART_LORA) - 1U),
+                          100U);
+  (void)lora_wait_ready(LORA_MODE_SWITCH_TIMEOUT_MS);
+}
+
 void LoRa_Init(void)
 {
-  HAL_GPIO_WritePin(LORA_M0_GPIO_Port, LORA_M0_Pin, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(LORA_M1_GPIO_Port, LORA_M1_Pin, GPIO_PIN_RESET);
-  (void)lora_wait_ready(LORA_READY_TIMEOUT_MS);
+  lora_enter_uart_lora_mode();
 }
 
 HAL_StatusTypeDef LoRa_SendCheckpoint(uint8_t checkpoint, uint32_t elapsed_ms)
 {
   char msg[96];
+  char time_buf[9];
   HAL_StatusTypeDef ret;
   const uint32_t elapsed_s = elapsed_ms / 1000U;
   const uint32_t minutes = elapsed_s / 60U;
   const uint32_t seconds = elapsed_s % 60U;
+
+  AppTime_GetBeijingTime(time_buf, sizeof(time_buf));
+
   const int len = snprintf(msg, sizeof(msg),
                            "TEAM=%s;NAME=%s;TIME=%s;POINT=2.%u;ELAPSED=%02lu:%02lu\r\n",
                            APP_TEAM_ID,
                            APP_TEAM_NAME,
-                           APP_CURRENT_TIME,
+                           time_buf,
                            checkpoint,
                            minutes,
                            seconds);

@@ -1,60 +1,47 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file    stm32f1xx_it.c
-  * @brief   Interrupt Service Routines.
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2026 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
+  * 中文说明：本段为工程生成代码说明。
   */
 /* USER CODE END Header */
 
-/* Includes ------------------------------------------------------------------*/
+/* 包含文件 ------------------------------------------------------------------*/
 #include "main.h"
 #include "stm32f1xx_it.h"
-/* Private includes ----------------------------------------------------------*/
+/* 私有包含文件 --------------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 /* USER CODE END Includes */
 
-/* Private typedef -----------------------------------------------------------*/
+/* 私有类型定义 --------------------------------------------------------------*/
 /* USER CODE BEGIN TD */
 
 /* USER CODE END TD */
 
-/* Private define ------------------------------------------------------------*/
+/* 私有宏定义 ----------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
 /* USER CODE END PD */
 
-/* Private macro -------------------------------------------------------------*/
+/* 私有宏 --------------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
 
 /* USER CODE END PM */
 
-/* Private variables ---------------------------------------------------------*/
+/* 私有变量 ------------------------------------------------------------------*/
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
 
-/* Private function prototypes -----------------------------------------------*/
+/* 私有函数声明 --------------------------------------------------------------*/
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
-/* Private user code ---------------------------------------------------------*/
+/* 私有用户代码 --------------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
 /* USER CODE END 0 */
 
-/* External variables --------------------------------------------------------*/
+/* 外部变量 ------------------------------------------------------------------*/
 extern UART_HandleTypeDef huart4;
 extern UART_HandleTypeDef huart1;
 extern UART_HandleTypeDef huart2;
@@ -64,11 +51,15 @@ extern TIM_HandleTypeDef htim6;
 
 /* USER CODE END EV */
 
-/******************************************************************************/
-/*           Cortex-M3 Processor Interruption and Exception Handlers          */
-/******************************************************************************/
 /**
-  * @brief This function handles Non maskable interrupt.
+  * 中文说明：本段为工程生成代码说明。
+  */
+/*           Cortex-M3 处理器中断和异常处理函数                              */
+/**
+  * 中文说明：本段为工程生成代码说明。
+  */
+/**
+  * 中文说明：本段为工程生成代码说明。
   */
 void NMI_Handler(void)
 {
@@ -83,7 +74,7 @@ void NMI_Handler(void)
 }
 
 /**
-  * @brief This function handles Hard fault interrupt.
+  * 中文说明：本段为工程生成代码说明。
   */
 void HardFault_Handler(void)
 {
@@ -98,7 +89,7 @@ void HardFault_Handler(void)
 }
 
 /**
-  * @brief This function handles Memory management fault.
+  * 中文说明：本段为工程生成代码说明。
   */
 void MemManage_Handler(void)
 {
@@ -113,7 +104,7 @@ void MemManage_Handler(void)
 }
 
 /**
-  * @brief This function handles Prefetch fault, memory access fault.
+  * 中文说明：本段为工程生成代码说明。
   */
 void BusFault_Handler(void)
 {
@@ -128,7 +119,7 @@ void BusFault_Handler(void)
 }
 
 /**
-  * @brief This function handles Undefined instruction or illegal state.
+  * 中文说明：本段为工程生成代码说明。
   */
 void UsageFault_Handler(void)
 {
@@ -143,7 +134,7 @@ void UsageFault_Handler(void)
 }
 
 /**
-  * @brief This function handles Debug monitor.
+  * 中文说明：本段为工程生成代码说明。
   */
 void DebugMon_Handler(void)
 {
@@ -156,7 +147,7 @@ void DebugMon_Handler(void)
 }
 
 /**
-  * @brief This function handles USART1 global interrupt.
+  * 中文说明：本段为工程生成代码说明。
   */
 void USART1_IRQHandler(void)
 {
@@ -170,7 +161,7 @@ void USART1_IRQHandler(void)
 }
 
 /**
-  * @brief This function handles USART2 global interrupt.
+  * 中文说明：本段为工程生成代码说明。
   */
 void USART2_IRQHandler(void)
 {
@@ -184,7 +175,7 @@ void USART2_IRQHandler(void)
 }
 
 /**
-  * @brief This function handles UART4 global interrupt.
+  * 中文说明：本段为工程生成代码说明。
   */
 void UART4_IRQHandler(void)
 {
@@ -198,7 +189,7 @@ void UART4_IRQHandler(void)
 }
 
 /**
-  * @brief This function handles TIM6 global interrupt.
+  * 中文说明：本段为工程生成代码说明。
   */
 void TIM6_IRQHandler(void)
 {

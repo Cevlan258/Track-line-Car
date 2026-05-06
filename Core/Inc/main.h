@@ -1,24 +1,10 @@
 /* USER CODE BEGIN Header */
 /**
-  ******************************************************************************
-  * @file           : main.h
-  * @brief          : Header for main.c file.
-  *                   This file contains the common defines of the application.
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2026 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
+  * 中文说明：本段为工程生成代码说明。
   */
 /* USER CODE END Header */
 
-/* Define to prevent recursive inclusion -------------------------------------*/
+/* 防止重复包含 --------------------------------------------------------------*/
 #ifndef __MAIN_H
 #define __MAIN_H
 
@@ -26,43 +12,39 @@
 extern "C" {
 #endif
 
-/* Includes ------------------------------------------------------------------*/
+/* 包含文件 ------------------------------------------------------------------*/
 #include "stm32f1xx_hal.h"
 
-/* Private includes ----------------------------------------------------------*/
+/* 私有包含文件 --------------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
 /* USER CODE END Includes */
 
-/* Exported types ------------------------------------------------------------*/
+/* 导出类型 ------------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
 
 /* USER CODE END ET */
 
-/* Exported constants --------------------------------------------------------*/
+/* 导出常量 ------------------------------------------------------------------*/
 /* USER CODE BEGIN EC */
 
 /* USER CODE END EC */
 
-/* Exported macro ------------------------------------------------------------*/
+/* 导出宏 --------------------------------------------------------------------*/
 /* USER CODE BEGIN EM */
 
 /* USER CODE END EM */
 
-/* Exported functions prototypes ---------------------------------------------*/
+/* 导出函数声明 --------------------------------------------------------------*/
 void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
 
 /* USER CODE END EFP */
 
-/* Private defines -----------------------------------------------------------*/
+/* 私有定义 ------------------------------------------------------------------*/
 #define BEEP_Pin GPIO_PIN_13
 #define BEEP_GPIO_Port GPIOC
-#define LORA_M0_Pin GPIO_PIN_0
-#define LORA_M0_GPIO_Port GPIOC
-#define LORA_M1_Pin GPIO_PIN_1
-#define LORA_M1_GPIO_Port GPIOC
 #define LORA_AUX_Pin GPIO_PIN_2
 #define LORA_AUX_GPIO_Port GPIOC
 #define OLED_CS_Pin GPIO_PIN_3

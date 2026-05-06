@@ -1,11 +1,13 @@
 #include "app_state.h"
 #include "app_config.h"
 #include "app_start.h"
+#include "app_time.h"
 #include "ax_ccd.h"
 #include "ax_kinematics.h"
 #include "ax_robot.h"
 #include "ax_vin.h"
 #include "display_ssd1309.h"
+#include "gate_detector.h"
 #include "lora.h"
 #include "radar.h"
 
@@ -19,8 +21,6 @@ typedef enum
 static AppStateId app_state = APP_STATE_IDLE;
 static uint32_t state_enter_ms;
 static uint32_t last_display_ms;
-static int32_t last_marker_distance_mm;
-static uint8_t marker_index;
 static uint8_t lora_sent;
 static RadarScanPhase radar_phase;
 static uint32_t radar_phase_start_ms;
@@ -83,26 +83,26 @@ static void set_velocity(int16_t vx, int16_t iw)
   R_Vel.TG_IW = iw;
 }
 
-static void handle_marker_detection(void)
+static void handle_gate_detection(void)
 {
-  const AX_CCD_LineInfo info = AX_CCD_GetLineInfo();
+  const RadarSample sample = Radar_GetSample();
   const int32_t distance = AX_ROBOT_GetDistanceMm();
 
-  if ((info.marker_detected != 0U) &&
-      ((distance - last_marker_distance_mm) > APP_MARKER_MIN_DISTANCE_MM))
-  {
-    marker_index++;
-    last_marker_distance_mm = distance;
+  GateDetector_Update(&sample, now_ms(), distance);
 
-    if (marker_index == 1U)
+  if (GateDetector_GetEvent() == GATE_EVENT_PASSED)
+  {
+    const uint8_t gate_count = GateDetector_GetCount();
+
+    if (gate_count == 1U)
     {
       enter_state(APP_STATE_LORA_2_1);
     }
-    else if (marker_index == 2U)
+    else if (gate_count == 2U)
     {
       enter_state(APP_STATE_LORA_2_2);
     }
-    else if (marker_index == 3U)
+    else if (gate_count == 3U)
     {
       enter_state(APP_STATE_RADAR_PRE_SCAN);
     }
@@ -115,10 +115,13 @@ static void update_line_display(void)
   if ((now - last_display_ms) >= APP_DISPLAY_PERIOD_MS)
   {
     const AX_CCD_LineInfo info = AX_CCD_GetLineInfo();
+    const RadarSample sample = Radar_GetSample();
     uint8_t battery_percent;
     R_Bat_Vol = AX_VIN_GetVol_X100();
     battery_percent = AX_VIN_GetPercent(R_Bat_Vol);
-    Display_ShowLineSensor(AX_CCD_GetLastFrame(), &info, state_name(app_state), R_Bat_Vol, battery_percent);
+    Display_ShowLineGate(AX_CCD_GetLastFrame(), &info, &sample, state_name(app_state),
+                         GateDetector_GetCount(), GateDetector_GetStateName(),
+                         GateDetector_GetLastScore(), R_Bat_Vol, battery_percent);
     last_display_ms = now;
   }
 }
@@ -215,15 +218,20 @@ static void update_avoid_state(void)
 void AppState_Init(void)
 {
   Display_Init();
+  AppTime_Init();
+  if (AppTime_IsValid() == 0U)
+  {
+    Display_ShowStatus("RTC ERR", 0);
+    osDelay(500);
+  }
   LoRa_Init();
   Radar_Init();
+  GateDetector_Init();
   AppStart_Init();
 
   app_state = APP_STATE_IDLE;
   state_enter_ms = now_ms();
   last_display_ms = 0;
-  last_marker_distance_mm = 0;
-  marker_index = 0;
   lora_sent = 0;
   radar_decision = RADAR_SIDE_UNKNOWN;
   ax_robot_move_enable = 0;
@@ -248,6 +256,7 @@ void AppState_Task(void *argument)
   for (;;)
   {
     AppStart_Poll();
+    AppTime_TaskPoll();
     Radar_TaskPoll();
 
     switch (app_state)
@@ -260,6 +269,7 @@ void AppState_Task(void *argument)
         if (AppStart_IsStarted() != 0U)
         {
           AX_ROBOT_ResetDistance();
+          GateDetector_Init();
           ax_robot_move_enable = 1;
           ax_ccd_velocity = APP_LINE_SPEED_MM_S;
           enter_state(APP_STATE_LINE_TASK);
@@ -268,7 +278,7 @@ void AppState_Task(void *argument)
 
       case APP_STATE_LINE_TASK:
         ax_robot_move_enable = 1;
-        handle_marker_detection();
+        handle_gate_detection();
         update_line_display();
         break;
 

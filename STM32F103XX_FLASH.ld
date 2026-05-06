@@ -49,56 +49,56 @@
 *****************************************************************************
 */
 
-/* Entry Point */
+/* 入口点 */
 ENTRY(Reset_Handler)
 
-/* Specify the memory areas */
+/* 指定内存区域 */
 MEMORY
 {
 RAM (xrw)      : ORIGIN = 0x20000000, LENGTH = 48K
 FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 256K
 }
 
-/* Highest address of the user mode stack */
-_estack = ORIGIN(RAM) + LENGTH(RAM);    /* end of RAM */
-/* Generate a link error if heap and stack don't fit into RAM */
-_Min_Heap_Size = 0x200;      /* required amount of heap  */
-_Min_Stack_Size = 0x400; /* required amount of stack */
+/* 用户模式栈最高地址 */
+_estack = ORIGIN(RAM) + LENGTH(RAM);    /* RAM 结束地址 */
+/* 如果堆和栈无法放入 RAM，则生成链接错误 */
+_Min_Heap_Size = 0x200;      /* 堆所需大小 */
+_Min_Stack_Size = 0x400; /* 栈所需大小 */
 
-/* Define output sections */
+/* 定义输出段 */
 SECTIONS
 {
-  /* The startup code goes first into FLASH */
+  /* 启动代码首先放入 FLASH */
   .isr_vector :
   {
     . = ALIGN(4);
-    KEEP(*(.isr_vector)) /* Startup code */
+    KEEP(*(.isr_vector)) /* 启动代码 */
     . = ALIGN(4);
   } >FLASH
 
-  /* The program code and other data goes into FLASH */
+  /* 程序代码和其他数据放入 FLASH */
   .text :
   {
     . = ALIGN(4);
-    *(.text)           /* .text sections (code) */
-    *(.text*)          /* .text* sections (code) */
-    *(.glue_7)         /* glue arm to thumb code */
-    *(.glue_7t)        /* glue thumb to arm code */
+    *(.text)           /* .text 代码段 */
+    *(.text*)          /* .text* 代码段 */
+    *(.glue_7)         /* ARM 到 Thumb 的连接代码 */
+    *(.glue_7t)        /* Thumb 到 ARM 的连接代码 */
     *(.eh_frame)
 
     KEEP (*(.init))
     KEEP (*(.fini))
 
     . = ALIGN(4);
-    _etext = .;        /* define a global symbols at end of code */
+    _etext = .;        /* 定义代码结束位置全局符号 */
   } >FLASH
 
-  /* Constant data goes into FLASH */
+  /* 常量数据放入 FLASH */
   .rodata :
   {
     . = ALIGN(4);
-    *(.rodata)         /* .rodata sections (constants, strings, etc.) */
-    *(.rodata*)        /* .rodata* sections (constants, strings, etc.) */
+    *(.rodata)         /* .rodata 常量和字符串段 */
+    *(.rodata*)        /* .rodata* 常量和字符串段 */
     . = ALIGN(4);
   } >FLASH
 
@@ -147,28 +147,28 @@ SECTIONS
     . = ALIGN(4);
   } >FLASH
 
-  /* used by the startup to initialize data */
+  /* 供启动代码初始化数据使用 */
   _sidata = LOADADDR(.data);
 
-  /* Initialized data sections goes into RAM, load LMA copy after code */
+  /* 已初始化数据段放入 RAM，加载地址位于代码之后 */
   .data :
   {
     . = ALIGN(4);
-    _sdata = .;        /* create a global symbol at data start */
-    *(.data)           /* .data sections */
-    *(.data*)          /* .data* sections */
-    *(.RamFunc)        /* .RamFunc sections */
-    *(.RamFunc*)       /* .RamFunc* sections */
+    _sdata = .;        /* 定义数据段起始全局符号 */
+    *(.data)           /* .data 数据段 */
+    *(.data*)          /* .data* 数据段 */
+    *(.RamFunc)        /* .RamFunc 段 */
+    *(.RamFunc*)       /* .RamFunc* 段 */
 
     . = ALIGN(4);
   } >RAM AT> FLASH
 
- /* Initialized TLS data section */
+ /* 已初始化 TLS 数据段 */
   .tdata : ALIGN(4)
   {
     *(.tdata .tdata.* .gnu.linkonce.td.*)
     . = ALIGN(4);
-    _edata = .;        /* define a global symbol at data end */
+    _edata = .;        /* 定义数据段结束全局符号 */
     PROVIDE(__data_end = .);
     PROVIDE(__tdata_end = .);
   } >RAM AT> FLASH
@@ -186,11 +186,11 @@ SECTIONS
   PROVIDE( __data_source = LOADADDR(.data) );
   PROVIDE( __data_source_end = __tdata_source_end );
   PROVIDE( __data_source_size = __data_source_end - __data_source );
-  /* Uninitialized data section */
+  /* 未初始化数据段 */
   .tbss (NOLOAD) : ALIGN(4)
   {
-     /* This is used by the startup in order to initialize the .bss secion */
-    _sbss = .;         /* define a global symbol at bss start */
+     /* 启动代码使用该位置初始化 .bss 段 */
+    _sbss = .;         /* 定义 bss 起始全局符号 */
     __bss_start__ = _sbss;
     *(.tbss .tbss.*)
     . = ALIGN(4);
@@ -216,7 +216,7 @@ SECTIONS
     *(COMMON)
 
       . = ALIGN(4);
-    _ebss = .;         /* define a global symbol at bss end */
+    _ebss = .;         /* 定义 bss 结束全局符号 */
     __bss_end__ = _ebss;
       PROVIDE( __bss_end = .);
   } >RAM
@@ -225,7 +225,7 @@ SECTIONS
   PROVIDE( __bss_start = __tbss_start );
   PROVIDE( __bss_size = __bss_end - __bss_start );
 
-  /* User_heap_stack section, used to check that there is enough RAM left */
+  /* 用户堆栈段，用于检查剩余 RAM 是否足够 */
   ._user_heap_stack (NOLOAD) :
   {
     . = ALIGN(8);
@@ -238,7 +238,7 @@ SECTIONS
 
 
 
-  /* Remove information from the standard libraries */
+  /* 移除标准库信息 */
   /DISCARD/ :
   {
     libc.a:* ( * )

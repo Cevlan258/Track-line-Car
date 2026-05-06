@@ -1,52 +1,55 @@
 cmake_minimum_required(VERSION 3.22)
 
 #
-# This file is generated only once,
-# and is not re-generated if converter is called multiple times.
+# 此文件只生成一次，
+# 即使多次运行转换器也不会重新生成。
 #
-# User is free to modify the file as much as necessary
+# 用户可按需修改此文件
 #
 
-# Setup compiler settings
+# 设置编译器配置
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
 
 
-# Define the build type
+# 定义构建类型
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Debug")
 endif()
 
-# Set the project name
+# 设置项目名称
 set(CMAKE_PROJECT_NAME CAR_FIRST)
 
-# Enable compile command to ease indexing with e.g. clangd
+# 启用编译命令导出，便于 clangd 等工具索引
 set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 
-# Core project settings
+# 核心项目设置
 project(${CMAKE_PROJECT_NAME})
 message("Build type: " ${CMAKE_BUILD_TYPE})
 
-# Enable CMake support for ASM and C languages
+# 启用 CMake 对 ASM 和 C 语言的支持
 enable_language(C ASM)
 
-# Create an executable object type
+# 创建可执行目标
 add_executable(${CMAKE_PROJECT_NAME})
 
-# Add STM32CubeMX generated sources
+# 添加 STM32CubeMX 生成的源码
 add_subdirectory(cmake/stm32cubemx)
 
-# Link directories setup
+# 设置链接目录
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user defined library search paths
+    # 添加用户定义的库搜索路径
 )
 
-# Add sources to executable
+# 添加可执行目标源码
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/Src/app_start.c
     App/Src/app_state.c
+    App/Src/app_time.c
+    App/Src/app_uart.c
     App/Src/display_ssd1309.c
+    App/Src/gate_detector.c
     App/Src/lora.c
     App/Src/radar.c
     App/Src/ax_beep.c
@@ -64,22 +67,22 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/Src/ax_vin.c
 )
 
-# Add include paths
+# 添加包含路径
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     App/Inc
 )
 
-# Add project symbols (macros)
+# 添加项目符号（宏）
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user defined symbols
+    # 添加用户定义的符号
 )
 
-# Remove wrong libob.a library dependency when using cpp files
+# 移除使用 C++ 文件时错误的 libob.a 库依赖
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 
-# Add linked libraries
+# 添加链接库
 target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
 
-    # Add user defined libraries
+    # 添加用户定义的库
 )

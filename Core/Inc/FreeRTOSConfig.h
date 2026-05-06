@@ -1,31 +1,7 @@
 /* USER CODE BEGIN Header */
-/*
- * FreeRTOS Kernel V10.3.1
- * Portion Copyright (C) 2017 Amazon.com, Inc. or its affiliates.  All Rights Reserved.
- * Portion Copyright (C) 2019 StMicroelectronics, Inc.  All Rights Reserved.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy of
- * this software and associated documentation files (the "Software"), to deal in
- * the Software without restriction, including without limitation the rights to
- * use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
- * the Software, and to permit persons to whom the Software is furnished to do so,
- * subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
- * FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
- * COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
- * IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- *
- * http://www.FreeRTOS.org
- * http://aws.amazon.com/freertos
- *
- * 1 tab == 4 spaces!
- */
+/**
+  * 中文说明：本段为工程生成代码说明。
+  */
 /* USER CODE END Header */
 
 #ifndef FREERTOS_CONFIG_H
@@ -44,10 +20,10 @@
  *----------------------------------------------------------*/
 
 /* USER CODE BEGIN Includes */
-/* Section where include file can be added */
+/* 可添加包含文件的区域 */
 /* USER CODE END Includes */
 
-/* Ensure definitions are only used by the compiler, and not by the assembler. */
+/* 确保这些定义只供编译器使用，不供汇编器使用。 */
 #if defined(__ICCARM__) || defined(__CC_ARM) || defined(__GNUC__)
   #include <stdint.h>
   extern uint32_t SystemCoreClock;
@@ -75,18 +51,17 @@
 #define configUSE_COUNTING_SEMAPHORES            1
 #define configUSE_PORT_OPTIMISED_TASK_SELECTION  0
 
-/* Co-routine definitions. */
+/* 协程定义。 */
 #define configUSE_CO_ROUTINES                    0
 #define configMAX_CO_ROUTINE_PRIORITIES          ( 2 )
 
-/* Software timer definitions. */
+/* 软件定时器定义。 */
 #define configUSE_TIMERS                         1
 #define configTIMER_TASK_PRIORITY                ( 2 )
 #define configTIMER_QUEUE_LENGTH                 10
 #define configTIMER_TASK_STACK_DEPTH             256
 
-/* Set the following definitions to 1 to include the API function, or zero
-to exclude the API function. */
+/* 下列定义设为 1 表示包含对应 API 函数，设为 0 表示排除。 */
 #define INCLUDE_vTaskPrioritySet            1
 #define INCLUDE_uxTaskPriorityGet           1
 #define INCLUDE_vTaskDelete                 1
@@ -101,54 +76,50 @@ to exclude the API function. */
 #define INCLUDE_xTaskGetCurrentTaskHandle   1
 #define INCLUDE_eTaskGetState               1
 
-/*
- * The CMSIS-RTOS V2 FreeRTOS wrapper is dependent on the heap implementation used
- * by the application thus the correct define need to be enabled below
- */
+/* CMSIS-RTOS V2 的 FreeRTOS 封装依赖当前使用的堆实现。 */
 #define USE_FreeRTOS_HEAP_4
 
-/* Cortex-M specific definitions. */
+/* Cortex-M 专用定义。 */
 #ifdef __NVIC_PRIO_BITS
- /* __BVIC_PRIO_BITS will be specified when CMSIS is being used. */
+ /* 使用 CMSIS 时会指定中断优先级位数。 */
  #define configPRIO_BITS         __NVIC_PRIO_BITS
 #else
  #define configPRIO_BITS         4
 #endif
 
-/* The lowest interrupt priority that can be used in a call to a "set priority"
-function. */
+/* 可用于设置优先级调用的最低中断优先级
+函数。 */
 #define configLIBRARY_LOWEST_INTERRUPT_PRIORITY   15
 
-/* The highest interrupt priority that can be used by any interrupt service
-routine that makes calls to interrupt safe FreeRTOS API functions.  DO NOT CALL
-INTERRUPT SAFE FREERTOS API FUNCTIONS FROM ANY INTERRUPT THAT HAS A HIGHER
-PRIORITY THAN THIS! (higher priorities are lower numeric values. */
+/* 任何中断服务程序可使用的最高中断优先级
+该中断服务程序可调用中断安全的 FreeRTOS API 函数。不要调用
+优先级高于此值的中断中的中断安全 FreeRTOS API 函数
+！（优先级越高，数值越小。） */
 #define configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY 5
 
-/* Interrupt priorities used by the kernel port layer itself.  These are generic
-to all Cortex-M ports, and do not rely on any particular library functions. */
+/* 内核移植层自身使用的中断优先级。这些定义是通用的
+适用于所有 Cortex-M 移植，不依赖特定库函数。 */
 #define configKERNEL_INTERRUPT_PRIORITY 		( configLIBRARY_LOWEST_INTERRUPT_PRIORITY << (8 - configPRIO_BITS) )
-/* !!!! configMAX_SYSCALL_INTERRUPT_PRIORITY must not be set to zero !!!!
-See http://www.FreeRTOS.org/RTOS-Cortex-M3-M4.html. */
+/* 最大系统调用中断优先级不能设置为 0。 */
 #define configMAX_SYSCALL_INTERRUPT_PRIORITY 	( configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY << (8 - configPRIO_BITS) )
 
-/* Normal assert() semantics without relying on the provision of an assert.h
-header file. */
+/* 普通断言语义，不依赖 assert.h
+头文件。 */
 /* USER CODE BEGIN 1 */
 #define configASSERT( x ) if ((x) == 0) {taskDISABLE_INTERRUPTS(); for( ;; );}
 /* USER CODE END 1 */
 
-/* Definitions that map the FreeRTOS port interrupt handlers to their CMSIS
-standard names. */
+/* 将 FreeRTOS 移植层中断处理函数映射到 CMSIS
+标准名称。 */
 #define vPortSVCHandler    SVC_Handler
 #define xPortPendSVHandler PendSV_Handler
 
-/* IMPORTANT: After 10.3.1 update, Systick_Handler comes from NVIC (if SYS timebase = systick), otherwise from cmsis_os2.c */
+/* 重要说明：SysTick 处理函数来源取决于系统时基配置。 */
 
 #define USE_CUSTOM_SYSTICK_HANDLER_IMPLEMENTATION 0
 
 /* USER CODE BEGIN Defines */
-/* Section where parameter definitions can be added (for instance, to override default ones in FreeRTOS.h) */
+/* 可添加参数定义的区域，例如覆盖 FreeRTOS.h 中的默认值。 */
 /* USER CODE END Defines */
 
 #endif /* FREERTOS_CONFIG_H */
