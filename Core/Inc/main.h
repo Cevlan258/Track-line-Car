@@ -57,10 +57,6 @@ void Error_Handler(void);
 #define LED_RED_GPIO_Port GPIOC
 #define KEY_Pin GPIO_PIN_0
 #define KEY_GPIO_Port GPIOB
-#define CCD_SI_Pin GPIO_PIN_10
-#define CCD_SI_GPIO_Port GPIOB
-#define CCD_CLK_Pin GPIO_PIN_11
-#define CCD_CLK_GPIO_Port GPIOB
 #define LED_GREEN_Pin GPIO_PIN_8
 #define LED_GREEN_GPIO_Port GPIOA
 #define SERVO_PWM_Pin GPIO_PIN_7

@@ -185,6 +185,23 @@ static void fb_flush(void)
   }
 }
 
+static char road_code(uint8_t road_type)
+{
+  switch ((AX_VisionRoadType)road_type)
+  {
+    case AX_VISION_ROAD_STRAIGHT: return 'S';
+    case AX_VISION_ROAD_LEFT_CURVE: return 'L';
+    case AX_VISION_ROAD_RIGHT_CURVE: return 'R';
+    case AX_VISION_ROAD_FORK: return 'F';
+    case AX_VISION_ROAD_CROSS: return 'X';
+    case AX_VISION_ROAD_T_LEFT: return 'A';
+    case AX_VISION_ROAD_T_RIGHT: return 'B';
+    case AX_VISION_ROAD_FINISH: return 'E';
+    case AX_VISION_ROAD_UNKNOWN:
+    default: return '?';
+  }
+}
+
 void Display_Init(void)
 {
   HAL_GPIO_WritePin(OLED_CS_GPIO_Port, OLED_CS_Pin, GPIO_PIN_SET);
@@ -269,7 +286,7 @@ void Display_ShowLineSensor(const uint16_t *frame, const AX_CCD_LineInfo *info, 
       fb_text(48, 28, "NO LINE");
     }
 
-    (void)snprintf(line, sizeof(line), "O%03d B%03u", info->offset, info->black_count);
+    (void)snprintf(line, sizeof(line), "O%03d %c%03u", info->offset, road_code(info->road_type), info->confidence);
     fb_text(0, 8, line);
     (void)snprintf(line, sizeof(line), "%02u.%01uV", vin_x100 / 100U, (vin_x100 % 100U) / 10U);
     fb_text(104, 8, line);
@@ -327,7 +344,7 @@ void Display_ShowLineGate(const uint16_t *frame, const AX_CCD_LineInfo *info, co
       fb_text(48, 28, "NO LINE");
     }
 
-    (void)snprintf(line, sizeof(line), "O%03d B%03u", info->offset, info->black_count);
+    (void)snprintf(line, sizeof(line), "O%03d %c%03u", info->offset, road_code(info->road_type), info->confidence);
     fb_text(0, 16, line);
     (void)snprintf(line, sizeof(line), "%02u.%01uV", vin_x100 / 100U, (vin_x100 % 100U) / 10U);
     fb_text(104, 16, line);

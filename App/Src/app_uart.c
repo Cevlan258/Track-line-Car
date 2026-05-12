@@ -1,5 +1,6 @@
 #include "app_uart.h"
 #include "app_time.h"
+#include "ax_ccd.h"
 #include "radar.h"
 
 void App_UartRxCpltCallback(UART_HandleTypeDef *huart)
@@ -11,6 +12,10 @@ void App_UartRxCpltCallback(UART_HandleTypeDef *huart)
   else if (huart->Instance == USART1)
   {
     AppTime_UartRxCpltCallback(huart);
+  }
+  else if (huart->Instance == USART3)
+  {
+    AX_CCD_UartRxCpltCallback(huart);
   }
 }
 

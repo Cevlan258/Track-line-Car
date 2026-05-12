@@ -126,6 +126,14 @@ static void update_line_display(void)
   }
 }
 
+static uint8_t vision_finish_detected(void)
+{
+  const AX_CCD_LineInfo info = AX_CCD_GetLineInfo();
+
+  return ((info.finish_detected != 0U) ||
+          ((AX_VisionRoadType)info.road_type == AX_VISION_ROAD_FINISH)) ? 1U : 0U;
+}
+
 static void update_status_display(void)
 {
   const uint32_t now = now_ms();
@@ -279,6 +287,10 @@ void AppState_Task(void *argument)
       case APP_STATE_LINE_TASK:
         ax_robot_move_enable = 1;
         handle_gate_detection();
+        if (vision_finish_detected() != 0U)
+        {
+          enter_state(APP_STATE_FINISH);
+        }
         update_line_display();
         break;
 
