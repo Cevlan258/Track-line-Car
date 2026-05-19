@@ -58,8 +58,8 @@ void AX_ROBOT_Kinematics(void)
   R_Wheel_B.PWM = AX_SPEED_PidCtlB(R_Wheel_B.TG, (float)R_Wheel_B.RT);
 
   AX_SERVO_SetSteering(R_Vel.TG_IW);
-  AX_MOTOR_A_SetSpeed(-R_Wheel_A.PWM);
-  AX_MOTOR_B_SetSpeed(-R_Wheel_B.PWM);
+  AX_MOTOR_A_SetSpeed(R_Wheel_A.PWM);
+  AX_MOTOR_B_SetSpeed(R_Wheel_B.PWM);
 }
 
 void AX_ROBOT_Stop(void)

@@ -83,8 +83,10 @@ static void update_synthetic_frame(const AX_CCD_LineInfo *info)
 static AX_CCD_LineInfo line_info_with_timeout(void)
 {
   AX_CCD_LineInfo info = ccd_line_info;
+  const uint8_t fresh = ((HAL_GetTick() - openmv_last_rx_ms) <= APP_OPENMV_TIMEOUT_MS) ? 1U : 0U;
 
-  if ((HAL_GetTick() - openmv_last_rx_ms) > APP_OPENMV_TIMEOUT_MS)
+  info.fresh = fresh;
+  if (fresh == 0U)
   {
     info.line_valid = 0U;
     info.confidence = 0U;
@@ -125,6 +127,7 @@ static void publish_openmv_frame(const uint8_t *frame)
   info.start_detected = ((flags & OPENMV_FLAG_START) != 0U) ? 1U : 0U;
   info.finish_detected = ((flags & OPENMV_FLAG_FINISH) != 0U) ? 1U : 0U;
   info.frame_seq = frame[3];
+  info.fresh = 1U;
 
   ccd_line_info = info;
   openmv_last_rx_ms = HAL_GetTick();
@@ -179,6 +182,7 @@ void AX_CCD_Init(void)
   initial_info.left_edge = 56U;
   initial_info.right_edge = 72U;
   initial_info.road_type = AX_VISION_ROAD_UNKNOWN;
+  initial_info.fresh = 0U;
   ccd_line_info = initial_info;
   openmv_last_rx_ms = HAL_GetTick();
   update_synthetic_frame(&initial_info);

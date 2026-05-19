@@ -3,6 +3,7 @@
 #include "app_start.h"
 #include "app_time.h"
 #include "ax_ccd.h"
+#include "ax_function.h"
 #include "ax_kinematics.h"
 #include "ax_robot.h"
 #include "ax_vin.h"
@@ -129,6 +130,11 @@ static void update_line_display(void)
 static uint8_t vision_finish_detected(void)
 {
   const AX_CCD_LineInfo info = AX_CCD_GetLineInfo();
+
+  if (AX_FUN_IsFinishStage() == 0U)
+  {
+    return 0U;
+  }
 
   return ((info.finish_detected != 0U) ||
           ((AX_VisionRoadType)info.road_type == AX_VISION_ROAD_FINISH)) ? 1U : 0U;

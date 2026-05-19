@@ -19,6 +19,7 @@ static const LineRouteStep line_route_steps[] = {
 
 static uint8_t line_route_step;
 static uint8_t line_route_event_armed = 1U;
+static uint8_t line_route_event_ticks;
 static uint32_t line_route_lock_until_ms;
 static AX_CCD_SegmentPreference line_route_preference = AX_CCD_SEGMENT_NEAREST;
 static int16_t line_route_speed_limit = APP_LINE_SPEED_MM_S;
@@ -31,6 +32,16 @@ static int16_t int16_min(int16_t a, int16_t b)
 static uint8_t vision_is_route_event(const AX_CCD_LineInfo *info)
 {
   if (info->line_valid == 0U)
+  {
+    return 0U;
+  }
+
+  if (info->confidence < APP_OPENMV_ROUTE_MIN_CONFIDENCE)
+  {
+    return 0U;
+  }
+
+  if (info->marker_detected == 0U)
   {
     return 0U;
   }
@@ -56,18 +67,38 @@ static void line_route_reset(void)
 {
   line_route_step = 0U;
   line_route_event_armed = 1U;
+  line_route_event_ticks = 0U;
   line_route_lock_until_ms = 0U;
   line_route_preference = AX_CCD_SEGMENT_NEAREST;
   line_route_speed_limit = APP_LINE_SPEED_MM_S;
 }
 
+uint8_t AX_FUN_IsFinishStage(void)
+{
+  return (line_route_step >= (uint8_t)(sizeof(line_route_steps) / sizeof(line_route_steps[0]))) ? 1U : 0U;
+}
+
 static void line_route_update(const AX_CCD_LineInfo *info)
 {
   const uint32_t now = HAL_GetTick();
-  const uint8_t route_event = vision_is_route_event(info);
+  uint8_t route_event = vision_is_route_event(info);
 
   line_route_preference = AX_CCD_SEGMENT_NEAREST;
   line_route_speed_limit = APP_LINE_SPEED_MM_S;
+
+  if (route_event != 0U)
+  {
+    if (line_route_event_ticks < APP_OPENMV_ROUTE_CONFIRM_TICKS)
+    {
+      line_route_event_ticks++;
+    }
+  }
+  else
+  {
+    line_route_event_ticks = 0U;
+  }
+
+  route_event = (line_route_event_ticks >= APP_OPENMV_ROUTE_CONFIRM_TICKS) ? 1U : 0U;
 
   if ((route_event == 0U) && (now >= line_route_lock_until_ms))
   {
@@ -93,6 +124,7 @@ static void line_route_update(const AX_CCD_LineInfo *info)
     line_route_speed_limit = line_route_steps[line_route_step].speed_limit;
     line_route_step++;
     line_route_event_armed = 0U;
+    line_route_event_ticks = 0U;
     line_route_lock_until_ms = now + APP_OPENMV_ROUTE_LOCK_MS;
   }
 }

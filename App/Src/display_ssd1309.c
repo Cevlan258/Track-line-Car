@@ -286,7 +286,11 @@ void Display_ShowLineSensor(const uint16_t *frame, const AX_CCD_LineInfo *info, 
       fb_text(48, 28, "NO LINE");
     }
 
-    (void)snprintf(line, sizeof(line), "O%03d %c%03u", info->offset, road_code(info->road_type), info->confidence);
+    (void)snprintf(line, sizeof(line), "MV%c O%03d %c%03u",
+                   (info->fresh != 0U) ? 'K' : '-',
+                   info->offset,
+                   road_code(info->road_type),
+                   info->confidence);
     fb_text(0, 8, line);
     (void)snprintf(line, sizeof(line), "%02u.%01uV", vin_x100 / 100U, (vin_x100 % 100U) / 10U);
     fb_text(104, 8, line);
@@ -344,7 +348,11 @@ void Display_ShowLineGate(const uint16_t *frame, const AX_CCD_LineInfo *info, co
       fb_text(48, 28, "NO LINE");
     }
 
-    (void)snprintf(line, sizeof(line), "O%03d %c%03u", info->offset, road_code(info->road_type), info->confidence);
+    (void)snprintf(line, sizeof(line), "MV%c O%03d %c%03u",
+                   (info->fresh != 0U) ? 'K' : '-',
+                   info->offset,
+                   road_code(info->road_type),
+                   info->confidence);
     fb_text(0, 16, line);
     (void)snprintf(line, sizeof(line), "%02u.%01uV", vin_x100 / 100U, (vin_x100 % 100U) / 10U);
     fb_text(104, 16, line);

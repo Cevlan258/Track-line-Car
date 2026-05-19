@@ -19,6 +19,7 @@ typedef struct
   uint8_t start_detected;
   uint8_t finish_detected;
   uint8_t frame_seq;
+  uint8_t fresh;
 } AX_CCD_LineInfo;
 
 typedef enum
