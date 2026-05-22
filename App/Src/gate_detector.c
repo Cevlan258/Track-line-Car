@@ -19,6 +19,75 @@ static int32_t lock_distance_mm;
 static uint16_t last_distance_cm;
 static uint16_t last_score;
 
+static int16_t abs_i16(int16_t value)
+{
+  return (value < 0) ? (int16_t)(0 - value) : value;
+}
+
+static uint8_t gate_find_pair(const RadarSample *sample, uint16_t *distance_cm, uint16_t *score)
+{
+  uint8_t i;
+  uint8_t j;
+  uint8_t found = 0U;
+  uint16_t best_distance_cm = 0U;
+
+  if ((sample == NULL) || (sample->valid == 0U))
+  {
+    return 0U;
+  }
+
+  for (i = 0; i < RADAR_MAX_TARGETS; i++)
+  {
+    const RadarTarget *left = &sample->targets[i];
+    if ((left->valid == 0U) || (left->x_mm >= 0) ||
+        (abs_i16(left->x_mm) < APP_GATE_POST_MIN_ABS_X_MM) ||
+        (left->y_mm < (int16_t)(APP_GATE_MIN_CM * 10)) ||
+        (left->y_mm > (int16_t)(APP_GATE_MAX_CM * 10)))
+    {
+      continue;
+    }
+
+    for (j = 0; j < RADAR_MAX_TARGETS; j++)
+    {
+      const RadarTarget *right = &sample->targets[j];
+      const int16_t width_mm = (int16_t)(right->x_mm - left->x_mm);
+
+      if ((right->valid == 0U) || (right->x_mm <= 0) ||
+          (abs_i16(right->x_mm) < APP_GATE_POST_MIN_ABS_X_MM) ||
+          (right->y_mm < (int16_t)(APP_GATE_MIN_CM * 10)) ||
+          (right->y_mm > (int16_t)(APP_GATE_MAX_CM * 10)) ||
+          (abs_i16((int16_t)(left->y_mm - right->y_mm)) > APP_GATE_PAIR_Y_TOL_MM) ||
+          (width_mm < APP_GATE_WIDTH_MIN_MM) || (width_mm > APP_GATE_WIDTH_MAX_MM))
+      {
+        continue;
+      }
+
+      best_distance_cm = (uint16_t)(((uint16_t)left->y_mm + (uint16_t)right->y_mm) / 20U);
+      found = 1U;
+      break;
+    }
+
+    if (found != 0U)
+    {
+      break;
+    }
+  }
+
+  if (found != 0U)
+  {
+    if (distance_cm != NULL)
+    {
+      *distance_cm = best_distance_cm;
+    }
+    if (score != NULL)
+    {
+      *score = 80U;
+    }
+  }
+
+  return found;
+}
+
 static uint16_t gate_score(const RadarSample *sample)
 {
   uint16_t score;
@@ -26,6 +95,11 @@ static uint16_t gate_score(const RadarSample *sample)
   if ((sample == NULL) || (sample->valid == 0U))
   {
     return 0;
+  }
+
+  if (gate_find_pair(sample, NULL, &score) != 0U)
+  {
+    return score;
   }
 
   score = (uint16_t)sample->moving_energy + (uint16_t)sample->static_energy;
@@ -37,15 +111,34 @@ static uint16_t gate_score(const RadarSample *sample)
   return score;
 }
 
+static uint16_t gate_distance_cm(const RadarSample *sample)
+{
+  uint16_t distance_cm = 0U;
+
+  if ((sample == NULL) || (sample->valid == 0U))
+  {
+    return 0U;
+  }
+
+  if (gate_find_pair(sample, &distance_cm, NULL) != 0U)
+  {
+    return distance_cm;
+  }
+
+  return sample->detect_distance_cm;
+}
+
 static uint8_t gate_target_active(const RadarSample *sample, uint16_t score)
 {
+  const uint16_t distance_cm = gate_distance_cm(sample);
+
   if ((sample == NULL) || (sample->valid == 0U))
   {
     return 0;
   }
 
-  if ((sample->detect_distance_cm < APP_GATE_MIN_CM) ||
-      (sample->detect_distance_cm > APP_GATE_MAX_CM))
+  if ((distance_cm < APP_GATE_MIN_CM) ||
+      (distance_cm > APP_GATE_MAX_CM))
   {
     return 0;
   }
@@ -55,6 +148,8 @@ static uint8_t gate_target_active(const RadarSample *sample, uint16_t score)
 
 static uint8_t gate_target_exiting(const RadarSample *sample, uint16_t score)
 {
+  const uint16_t distance_cm = gate_distance_cm(sample);
+
   if ((sample == NULL) || (sample->valid == 0U))
   {
     return 1;
@@ -65,14 +160,14 @@ static uint8_t gate_target_exiting(const RadarSample *sample, uint16_t score)
     return 1;
   }
 
-  if ((sample->detect_distance_cm < APP_GATE_MIN_CM) ||
-      (sample->detect_distance_cm > APP_GATE_MAX_CM))
+  if ((distance_cm < APP_GATE_MIN_CM) ||
+      (distance_cm > APP_GATE_MAX_CM))
   {
     return 1;
   }
 
-  if ((sample->detect_distance_cm > last_distance_cm) &&
-      ((sample->detect_distance_cm - last_distance_cm) >= APP_GATE_EXIT_JUMP_CM))
+  if ((distance_cm > last_distance_cm) &&
+      ((distance_cm - last_distance_cm) >= APP_GATE_EXIT_JUMP_CM))
   {
     return 1;
   }
@@ -165,7 +260,7 @@ void GateDetector_Update(const RadarSample *sample, uint32_t now_ms, int32_t dis
 
   if ((sample != NULL) && (sample->valid != 0U))
   {
-    last_distance_cm = sample->detect_distance_cm;
+    last_distance_cm = gate_distance_cm(sample);
   }
 }
 

@@ -14,10 +14,17 @@
 
 typedef enum
 {
-  RADAR_SCAN_LEFT = 0,
-  RADAR_SCAN_RIGHT,
+  RADAR_SCAN_COLLECT = 0,
+  RADAR_SCAN_RESCAN,
   RADAR_SCAN_DONE
 } RadarScanPhase;
+
+typedef enum
+{
+  AVOID_PHASE_ENTRY = 0,
+  AVOID_PHASE_PASS,
+  AVOID_PHASE_RECOVER
+} AvoidPhase;
 
 static AppStateId app_state = APP_STATE_IDLE;
 static uint32_t state_enter_ms;
@@ -25,9 +32,15 @@ static uint32_t last_display_ms;
 static uint8_t lora_sent;
 static RadarScanPhase radar_phase;
 static uint32_t radar_phase_start_ms;
+static int32_t radar_scan_start_distance_mm;
+static uint8_t radar_rescan_used;
+static uint8_t box_left_stable_frames;
+static uint8_t box_right_stable_frames;
 static uint16_t radar_left_score;
 static uint16_t radar_right_score;
 static RadarSide radar_decision = RADAR_SIDE_UNKNOWN;
+static AvoidPhase avoid_phase;
+static uint32_t avoid_phase_start_ms;
 
 static uint32_t now_ms(void)
 {
@@ -58,23 +71,140 @@ static void enter_state(AppStateId next)
 
   if (next == APP_STATE_RADAR_PRE_SCAN)
   {
-    radar_phase = RADAR_SCAN_LEFT;
+    radar_phase = RADAR_SCAN_COLLECT;
     radar_phase_start_ms = state_enter_ms;
+    radar_scan_start_distance_mm = AX_ROBOT_GetDistanceMm();
+    radar_rescan_used = 0U;
+    box_left_stable_frames = 0U;
+    box_right_stable_frames = 0U;
     radar_left_score = 0;
     radar_right_score = 0;
     radar_decision = RADAR_SIDE_UNKNOWN;
   }
+  else if ((next == APP_STATE_AVOID_LEFT) || (next == APP_STATE_AVOID_RIGHT))
+  {
+    avoid_phase = AVOID_PHASE_ENTRY;
+    avoid_phase_start_ms = state_enter_ms;
+  }
 }
 
-static uint16_t radar_score(RadarSample sample)
+static int16_t abs_i16(int16_t value)
 {
-  if (sample.valid == 0U)
+  return (value < 0) ? (int16_t)(0 - value) : value;
+}
+
+static uint16_t box_target_weight(const RadarTarget *target)
+{
+  uint16_t score = 1U;
+
+  if ((target == NULL) || (target->valid == 0U))
   {
-    return 0;
+    return 0U;
   }
 
-  return (uint16_t)sample.moving_energy + (uint16_t)sample.static_energy +
-         (sample.target_state != 0U ? 10U : 0U);
+  if ((target->y_mm < APP_BOX_Y_MIN_MM) || (target->y_mm > APP_BOX_Y_MAX_MM))
+  {
+    return 0U;
+  }
+
+  if (target->y_mm <= 900)
+  {
+    score = (uint16_t)(score + 2U);
+  }
+  else if (target->y_mm <= 1400)
+  {
+    score = (uint16_t)(score + 1U);
+  }
+
+  if (abs_i16(target->speed_cm_s) > 0)
+  {
+    score = (uint16_t)(score + 1U);
+  }
+
+  return score;
+}
+
+static void box_accumulate_scores(const RadarSample *sample)
+{
+  uint8_t i;
+  uint16_t left_frame_score = 0U;
+  uint16_t right_frame_score = 0U;
+
+  if ((sample == NULL) || (sample->valid == 0U))
+  {
+    box_left_stable_frames = 0U;
+    box_right_stable_frames = 0U;
+    return;
+  }
+
+  for (i = 0; i < RADAR_MAX_TARGETS; i++)
+  {
+    const RadarTarget *target = &sample->targets[i];
+    const uint16_t weight = box_target_weight(target);
+
+    if (weight == 0U)
+    {
+      continue;
+    }
+
+    if ((target->x_mm >= APP_BOX_LEFT_X_MIN_MM) && (target->x_mm <= APP_BOX_LEFT_X_MAX_MM))
+    {
+      left_frame_score = (uint16_t)(left_frame_score + weight);
+    }
+    else if ((target->x_mm >= APP_BOX_RIGHT_X_MIN_MM) && (target->x_mm <= APP_BOX_RIGHT_X_MAX_MM))
+    {
+      right_frame_score = (uint16_t)(right_frame_score + weight);
+    }
+  }
+
+  if (left_frame_score > 0U)
+  {
+    if (box_left_stable_frames < 0xFFU)
+    {
+      box_left_stable_frames++;
+    }
+  }
+  else
+  {
+    box_left_stable_frames = 0U;
+  }
+
+  if (right_frame_score > 0U)
+  {
+    if (box_right_stable_frames < 0xFFU)
+    {
+      box_right_stable_frames++;
+    }
+  }
+  else
+  {
+    box_right_stable_frames = 0U;
+  }
+
+  if (box_left_stable_frames >= APP_BOX_STABLE_FRAMES)
+  {
+    radar_left_score = (uint16_t)(radar_left_score + left_frame_score);
+  }
+
+  if (box_right_stable_frames >= APP_BOX_STABLE_FRAMES)
+  {
+    radar_right_score = (uint16_t)(radar_right_score + right_frame_score);
+  }
+}
+
+static RadarSide box_decide_free_side(void)
+{
+  if (radar_left_score > (uint16_t)(radar_right_score + APP_BOX_SCORE_MARGIN))
+  {
+    return RADAR_SIDE_RIGHT;
+  }
+
+  if (radar_right_score > (uint16_t)(radar_left_score + APP_BOX_SCORE_MARGIN))
+  {
+    return RADAR_SIDE_LEFT;
+  }
+
+  return RADAR_SIDE_UNKNOWN;
 }
 
 static void set_velocity(int16_t vx, int16_t iw)
@@ -172,36 +302,61 @@ static void update_radar_scan(void)
 {
   const uint32_t now = now_ms();
   const RadarSample sample = Radar_GetSample();
-  const uint16_t score = radar_score(sample);
+  const int32_t scan_distance = AX_ROBOT_GetDistanceMm() - radar_scan_start_distance_mm;
+  const uint32_t phase_elapsed = now - radar_phase_start_ms;
+  int16_t scan_yaw = (int16_t)(APP_BOX_RESCAN_YAW / 3);
 
-  if (radar_phase == RADAR_SCAN_LEFT)
+  box_accumulate_scores(&sample);
+
+  if (((now / 200U) & 1U) != 0U)
   {
-    set_velocity(0, APP_RADAR_SCAN_YAW);
-    if (score > radar_left_score)
-    {
-      radar_left_score = score;
-    }
+    scan_yaw = (int16_t)(0 - scan_yaw);
+  }
 
-    if ((now - radar_phase_start_ms) > APP_RADAR_SCAN_MS)
+  if (radar_phase == RADAR_SCAN_COLLECT)
+  {
+    set_velocity(APP_RADAR_SCAN_SPEED_MM_S, scan_yaw);
+
+    if ((scan_distance >= APP_BOX_SCAN_MIN_DISTANCE_MM) ||
+        (phase_elapsed >= APP_BOX_SCAN_MAX_MS))
     {
-      radar_phase = RADAR_SCAN_RIGHT;
-      radar_phase_start_ms = now;
+      radar_decision = box_decide_free_side();
+      if ((radar_decision == RADAR_SIDE_UNKNOWN) && (radar_rescan_used == 0U))
+      {
+        radar_phase = RADAR_SCAN_RESCAN;
+        radar_phase_start_ms = now;
+        radar_rescan_used = 1U;
+      }
+      else
+      {
+        if (radar_decision == RADAR_SIDE_UNKNOWN)
+        {
+          radar_decision = APP_BOX_DEFAULT_SIDE;
+        }
+        radar_phase = RADAR_SCAN_DONE;
+      }
     }
   }
-  else if (radar_phase == RADAR_SCAN_RIGHT)
+  else if (radar_phase == RADAR_SCAN_RESCAN)
   {
-    set_velocity(0, -APP_RADAR_SCAN_YAW);
-    if (score > radar_right_score)
-    {
-      radar_right_score = score;
-    }
+    const int16_t rescan_yaw = (phase_elapsed < (APP_BOX_RESCAN_MS / 2U)) ?
+                               APP_BOX_RESCAN_YAW : (int16_t)(0 - APP_BOX_RESCAN_YAW);
+    set_velocity(APP_RADAR_SCAN_SPEED_MM_S, rescan_yaw);
 
-    if ((now - radar_phase_start_ms) > (APP_RADAR_SCAN_MS * 2U))
+    if (phase_elapsed >= APP_BOX_RESCAN_MS)
     {
+      radar_decision = box_decide_free_side();
+      if (radar_decision == RADAR_SIDE_UNKNOWN)
+      {
+        radar_decision = APP_BOX_DEFAULT_SIDE;
+      }
       radar_phase = RADAR_SCAN_DONE;
-      radar_decision = (radar_left_score <= radar_right_score) ? RADAR_SIDE_LEFT : RADAR_SIDE_RIGHT;
-      enter_state((radar_decision == RADAR_SIDE_LEFT) ? APP_STATE_AVOID_LEFT : APP_STATE_AVOID_RIGHT);
     }
+  }
+
+  if (radar_phase == RADAR_SCAN_DONE)
+  {
+    enter_state((radar_decision == RADAR_SIDE_LEFT) ? APP_STATE_AVOID_LEFT : APP_STATE_AVOID_RIGHT);
   }
 
   if ((now - last_display_ms) >= APP_DISPLAY_PERIOD_MS)
@@ -213,19 +368,42 @@ static void update_radar_scan(void)
 
 static void update_avoid_state(void)
 {
-  const int16_t yaw = (app_state == APP_STATE_AVOID_LEFT) ? APP_AVOID_YAW : -APP_AVOID_YAW;
-  set_velocity(APP_AVOID_SPEED_MM_S, yaw);
+  const uint32_t now = now_ms();
+  const int16_t turn_yaw = (app_state == APP_STATE_AVOID_LEFT) ? APP_AVOID_YAW : (int16_t)(0 - APP_AVOID_YAW);
 
-  if ((now_ms() - last_display_ms) >= APP_DISPLAY_PERIOD_MS)
+  if (avoid_phase == AVOID_PHASE_ENTRY)
+  {
+    set_velocity(APP_AVOID_SPEED_MM_S, turn_yaw);
+    if ((now - avoid_phase_start_ms) >= APP_AVOID_ENTRY_MS)
+    {
+      avoid_phase = AVOID_PHASE_PASS;
+      avoid_phase_start_ms = now;
+    }
+  }
+  else if (avoid_phase == AVOID_PHASE_PASS)
+  {
+    set_velocity(APP_AVOID_SPEED_MM_S, 0);
+    if ((now - avoid_phase_start_ms) >= APP_AVOID_PASS_MS)
+    {
+      avoid_phase = AVOID_PHASE_RECOVER;
+      avoid_phase_start_ms = now;
+    }
+  }
+  else
+  {
+    set_velocity(APP_AVOID_SPEED_MM_S, (int16_t)(0 - (turn_yaw / 2)));
+    if ((now - avoid_phase_start_ms) >= APP_AVOID_RECOVER_MS)
+    {
+      enter_state(APP_STATE_LINE_TASK);
+      return;
+    }
+  }
+
+  if ((now - last_display_ms) >= APP_DISPLAY_PERIOD_MS)
   {
     const RadarSample sample = Radar_GetSample();
     Display_ShowRadar(&sample, radar_decision, state_name(app_state));
-    last_display_ms = now_ms();
-  }
-
-  if ((now_ms() - state_enter_ms) > APP_AVOID_MS)
-  {
-    enter_state(APP_STATE_LINE_TASK);
+    last_display_ms = now;
   }
 }
 
