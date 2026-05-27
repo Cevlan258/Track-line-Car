@@ -51,16 +51,16 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/Src/display_ssd1309.c
     App/Src/gate_detector.c
     App/Src/lora.c
+    App/Src/maix_link.c
+    App/Src/maix_link_protocol.c
     App/Src/radar.c
     App/Src/ax_beep.c
-    App/Src/ax_ccd.c
     App/Src/ax_delay.c
     App/Src/ax_encoder.c
     App/Src/ax_key.c
     App/Src/ax_kinematics.c
     App/Src/ax_led.c
     App/Src/ax_motor.c
-    App/Src/ax_function.c
     App/Src/ax_robot.c
     App/Src/ax_servo.c
     App/Src/ax_speed.c

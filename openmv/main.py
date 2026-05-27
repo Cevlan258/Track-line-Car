@@ -1,20 +1,20 @@
 import sensor
 import time
-from pyb import UART
+from pyb import UART, Pin, Timer
 
 
 UART_ID = 3
 UART_BAUDRATE = 115200
 
-IMG_W = 320
-IMG_H = 240
+IMG_W = 160
+IMG_H = 120
 CENTER_X = IMG_W // 2
 
-ROI_NEAR = (0, 175, IMG_W, 55)
-ROI_MID = (0, 115, IMG_W, 55)
-ROI_FAR = (0, 60, IMG_W, 55)
-START_ROI = (30, 70, 260, 145)
-FINISH_ROI = (30, 70, 260, 145)
+ROI_NEAR = (0, 88, IMG_W, 28)
+ROI_MID = (0, 58, IMG_W, 28)
+ROI_FAR = (0, 30, IMG_W, 28)
+START_ROI = (15, 35, 130, 72)
+FINISH_ROI = (15, 35, 130, 72)
 
 DEBUG_DRAW = False
 THRESHOLD_UPDATE_INTERVAL = 3
@@ -22,30 +22,37 @@ MID_FAR_UPDATE_INTERVAL = 2
 COLOR_UPDATE_INTERVAL = 3
 FRAME_COUNTER_RESET = 30000
 FIXED_EXPOSURE_MODE = True
-FIXED_EXPOSURE_US = 6000
-FIXED_GAIN_DB = 16
+FIXED_EXPOSURE_US = 7000
+FIXED_GAIN_DB = 12
+LIGHT_PWM_ENABLE = True
+LIGHT_PWM_PIN = "P6"
+LIGHT_PWM_TIMER = 4
+LIGHT_PWM_CHANNEL = 1
+LIGHT_PWM_FREQ = 1000
+LIGHT_PWM_DUTY = 90
 
 # 主巡线使用 LAB 阈值，并根据当前画面亮度动态调整 L 通道。
 BASE_BLACK_LINE_LAB = (0, 38, -18, 18, -18, 18)
 BASE_WHITE_TRACK_LAB = (65, 100, -22, 22, -22, 28)
-DYNAMIC_THRESHOLD_ROI = (0, 60, IMG_W, 170)
+DYNAMIC_THRESHOLD_ROI = (0, 30, IMG_W, 85)
 MIN_WHITE_L = 35
 MAX_BLACK_L = 50
 RED_THRESHOLD = (25, 85, 20, 80, 5, 70)
 GREEN_THRESHOLD = (25, 85, -80, -20, 0, 70)
 
-MIN_LINE_PIXELS = 30
-MIN_LINE_AREA = 40
+MIN_LINE_PIXELS = 12
+MIN_LINE_AREA = 18
 MAX_LINE_AREA_RATIO = 0.32
-MAX_WIDE_LINE_HEIGHT = 38
-SIDE_SAMPLE_WIDTH = 12
-SIDE_SAMPLE_MARGIN = 4
-MIN_WHITE_SIDE_PIXELS = 12
+MAX_WIDE_LINE_HEIGHT = 20
+SIDE_SAMPLE_WIDTH = 6
+SIDE_SAMPLE_MARGIN = 2
+MIN_WHITE_SIDE_PIXELS = 4
 MIN_WHITE_SIDE_AREA_RATIO = 0.18
-MAX_WHITE_SIDE_CHECKS = 4
-MIN_FINISH_PIXELS = 1200
-MIN_FINISH_AREA = 1800
-MAX_CENTER_STEP = 55
+MAX_WHITE_SIDE_CHECKS = 3
+MIN_COLOR_PIXELS = 45
+MIN_FINISH_PIXELS = 300
+MIN_FINISH_AREA = 450
+MAX_CENTER_STEP = 28
 LINE_HOLD_FRAMES = 2
 FILTER_OLD_WEIGHT = 3
 MIN_MARKER_CONFIDENCE = 70
@@ -102,6 +109,22 @@ def clamp(value, low, high):
 
 def norm_x(x):
     return int(clamp((x * 127) // (IMG_W - 1), 0, 127))
+
+
+def init_fill_light():
+    if not LIGHT_PWM_ENABLE:
+        return None
+
+    try:
+        tim = Timer(LIGHT_PWM_TIMER, freq=LIGHT_PWM_FREQ)
+        channel = tim.channel(LIGHT_PWM_CHANNEL, Timer.PWM, pin=Pin(LIGHT_PWM_PIN))
+        channel.pulse_width_percent(LIGHT_PWM_DUTY)
+        return channel
+    except Exception:
+        # PWM 映射异常时退回常亮，避免补光板完全不亮。
+        pin = Pin(LIGHT_PWM_PIN, Pin.OUT_PP)
+        pin.high()
+        return pin
 
 
 def read_preference_command():
@@ -170,18 +193,18 @@ def roi_has_white_track(img, roi, white_threshold):
 
 def max_line_width_for_roi(roi):
     if roi == ROI_NEAR:
-        return 120
+        return 60
     if roi == ROI_MID:
-        return 95
-    return 70
+        return 48
+    return 36
 
 
 def min_line_width_for_roi(roi):
     if roi == ROI_NEAR:
-        return 6
+        return 3
     if roi == ROI_MID:
-        return 4
-    return 3
+        return 2
+    return 2
 
 
 def line_has_white_side(img, blob, roi, white_threshold):
@@ -234,7 +257,7 @@ def find_line_blobs(img, roi, black_threshold, white_threshold):
         # 真实赛道线可以横向或纵向延伸，但不应像大块深色地面一样填满二维区域。
         if blob.area() > int(roi_area * MAX_LINE_AREA_RATIO):
             continue
-        if blob.w() > 220 and blob.h() > MAX_WIDE_LINE_HEIGHT:
+        if blob.w() > 110 and blob.h() > MAX_WIDE_LINE_HEIGHT:
             continue
 
         candidates.append(blob)
@@ -343,8 +366,8 @@ def detect_road(near_blobs, mid_blobs, far_blobs, selected):
         return ROAD_CROSS
 
     if near_count >= 2:
-        left_seen = any(blob_center(b) < CENTER_X - 35 for b in near_blobs)
-        right_seen = any(blob_center(b) > CENTER_X + 35 for b in near_blobs)
+        left_seen = any(blob_center(b) < CENTER_X - 18 for b in near_blobs)
+        right_seen = any(blob_center(b) > CENTER_X + 18 for b in near_blobs)
         if left_seen and right_seen:
             return ROAD_FORK
         if left_seen:
@@ -375,9 +398,9 @@ def detect_road(near_blobs, mid_blobs, far_blobs, selected):
         return ROAD_STRAIGHT
 
     dx //= samples
-    if dx < -18:
+    if dx < -9:
         return ROAD_LEFT_CURVE
-    if dx > 18:
+    if dx > 9:
         return ROAD_RIGHT_CURVE
     return ROAD_STRAIGHT
 
@@ -403,9 +426,9 @@ def confidence_from_blobs(selected, near_blobs, mid_blobs, far_blobs):
         return 0
 
     conf = 45
-    if selected.pixels() > 80:
+    if selected.pixels() > 30:
         conf += 15
-    if selected.h() > 12:
+    if selected.h() > 6:
         conf += 10
     if mid_blobs:
         conf += 15
@@ -445,7 +468,7 @@ def finish_block_present(img):
                            y_stride=2)
 
     for blob in blobs:
-        if blob.w() >= 45 and blob.h() >= 25 and blob.pixels() >= MIN_FINISH_PIXELS:
+        if blob.w() >= 23 and blob.h() >= 13 and blob.pixels() >= MIN_FINISH_PIXELS:
             return True, blob
 
     return False, None
@@ -512,8 +535,9 @@ def draw_debug(img, near_blobs, mid_blobs, far_blobs, selected, finish_blob,
 
 
 sensor.reset()
+fill_light = init_fill_light()
 sensor.set_pixformat(sensor.RGB565)
-sensor.set_framesize(sensor.QVGA)
+sensor.set_framesize(sensor.QQVGA)
 
 sensor.set_auto_exposure(True)
 sensor.set_auto_gain(True)
@@ -572,8 +596,8 @@ while True:
             last_road_type = road_type
 
     if frame_count == 1 or (frame_count % COLOR_UPDATE_INTERVAL) == 0:
-        cached_start_candidate = color_present(img, GREEN_THRESHOLD, 180, roi=START_ROI)
-        cached_finish_color_candidate = color_present(img, RED_THRESHOLD, 180, roi=FINISH_ROI)
+        cached_start_candidate = color_present(img, GREEN_THRESHOLD, MIN_COLOR_PIXELS, roi=START_ROI)
+        cached_finish_color_candidate = color_present(img, RED_THRESHOLD, MIN_COLOR_PIXELS, roi=FINISH_ROI)
         cached_finish_shape_candidate, cached_finish_blob = finish_block_present(img)
     start_candidate = cached_start_candidate
     finish_color_candidate = cached_finish_color_candidate

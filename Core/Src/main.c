@@ -15,7 +15,6 @@
 /* 私有包含文件 --------------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "ax_beep.h"
-#include "ax_ccd.h"
 #include "ax_delay.h"
 #include "ax_encoder.h"
 #include "ax_key.h"
@@ -108,7 +107,6 @@ int main(void)
   AX_ENCODER_A_Init();
   AX_ENCODER_B_Init();
   AX_VIN_Init();
-  AX_CCD_Init();
 
   /* USER CODE END 2 */
 

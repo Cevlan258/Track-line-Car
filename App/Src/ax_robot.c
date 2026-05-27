@@ -1,6 +1,4 @@
 #include "ax_robot.h"
-#include "app_state.h"
-#include "ax_function.h"
 #include "ax_kinematics.h"
 
 ROBOT_Velocity R_Vel;
@@ -31,12 +29,6 @@ void Robot_Task(void *parameter)
   for (;;)
   {
     vTaskDelayUntil(&previous_wake_time, time_increment);
-
-    if ((ax_control_mode == CTL_FN1) && (AppState_IsLineControlEnabled() != 0U))
-    {
-      AX_FUN_Ls1();
-    }
-
     AX_ROBOT_Kinematics();
   }
 }

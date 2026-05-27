@@ -29,6 +29,43 @@ static int16_t int16_min(int16_t a, int16_t b)
   return (a < b) ? a : b;
 }
 
+static int16_t line_yaw_limit(int32_t yaw)
+{
+  if (yaw > APP_LINE_MAX_YAW)
+  {
+    return APP_LINE_MAX_YAW;
+  }
+  if (yaw < -APP_LINE_MAX_YAW)
+  {
+    return (int16_t)(0 - APP_LINE_MAX_YAW);
+  }
+  return (int16_t)yaw;
+}
+
+static int16_t line_curve_yaw_boost(const AX_CCD_LineInfo *info, float bias)
+{
+  switch ((AX_VisionRoadType)info->road_type)
+  {
+    case AX_VISION_ROAD_LEFT_CURVE:
+      return (int16_t)(0 - APP_LINE_CURVE_YAW_BOOST);
+    case AX_VISION_ROAD_RIGHT_CURVE:
+      return APP_LINE_CURVE_YAW_BOOST;
+    case AX_VISION_ROAD_FORK:
+    case AX_VISION_ROAD_CROSS:
+      if (bias > 2.0f)
+      {
+        return APP_LINE_CURVE_YAW_BOOST;
+      }
+      if (bias < -2.0f)
+      {
+        return (int16_t)(0 - APP_LINE_CURVE_YAW_BOOST);
+      }
+      return 0;
+    default:
+      return 0;
+  }
+}
+
 static uint8_t vision_is_route_event(const AX_CCD_LineInfo *info)
 {
   if (info->line_valid == 0U)
@@ -236,7 +273,7 @@ void AX_FUN_Ls1(void)
       search_ticks++;
       velocity_cmd = line_velocity_ramp(velocity_cmd, APP_OPENMV_SEARCH_SPEED_MM_S);
       R_Vel.TG_IX = velocity_cmd;
-      R_Vel.TG_IW = (last_valid_bias >= 0.0f) ? -APP_OPENMV_SEARCH_YAW : APP_OPENMV_SEARCH_YAW;
+      R_Vel.TG_IW = (last_valid_bias >= 0.0f) ? APP_OPENMV_SEARCH_YAW : (int16_t)(0 - APP_OPENMV_SEARCH_YAW);
       ax_ccd_offset = (int16_t)last_valid_bias;
       return;
     }
@@ -262,8 +299,10 @@ void AX_FUN_Ls1(void)
   R_Vel.TG_IX = velocity_cmd;
   ax_ccd_offset = (int16_t)bias;
 
-  move_w = -ax_ccd_kp * bias * 0.1f - ax_ccd_kd * (bias - bias_last) * 0.1f;
-  R_Vel.TG_IW = (int16_t)move_w;
+  /* 大偏移时更充分利用当前舵机安全行程，弯道类型再补一点内切量。 */
+  move_w = ax_ccd_kp * bias * 0.14f + ax_ccd_kd * (bias - bias_last) * 0.1f;
+  move_w += (float)line_curve_yaw_boost(&info, bias);
+  R_Vel.TG_IW = line_yaw_limit((int32_t)move_w);
 
   bias_last = bias;
 }
