@@ -10,9 +10,19 @@ IMG_W = 320
 IMG_H = 240
 CENTER_X = IMG_W // 2
 
-ROI_NEAR = [0, 176, IMG_W, 54]
-ROI_MID = [0, 116, IMG_W, 54]
-ROI_FAR = [0, 58, IMG_W, 54]
+# 调试阶段保留较宽视野，扫描线算法会从近到远抽取多个横向带。
+SCAN_BAND_H = 16
+SCAN_BANDS = [
+    [0, 214, IMG_W, SCAN_BAND_H],
+    [0, 194, IMG_W, SCAN_BAND_H],
+    [0, 174, IMG_W, SCAN_BAND_H],
+    [0, 154, IMG_W, SCAN_BAND_H],
+    [0, 134, IMG_W, SCAN_BAND_H],
+    [0, 114, IMG_W, SCAN_BAND_H],
+    [0, 94, IMG_W, SCAN_BAND_H],
+    [0, 74, IMG_W, SCAN_BAND_H],
+    [0, 54, IMG_W, SCAN_BAND_H],
+]
 FINISH_ROI = [30, 70, 260, 145]
 
 BLACK_LINE_LAB = [0, 38, -18, 18, -18, 18]
@@ -36,13 +46,7 @@ CMD_FLAG_AVOIDING = 0x04
 
 STATUS_FLAG_STARTED = 0x01
 LORA_IDLE = 0
-LORA_SENDING = 1
 LORA_SENT = 2
-LORA_ERROR = 3
-
-PREF_NEAREST = 0
-PREF_LEFT = 1
-PREF_RIGHT = 2
 
 ROAD_UNKNOWN = 0
 ROAD_STRAIGHT = 1
@@ -50,20 +54,36 @@ ROAD_LEFT_CURVE = 2
 ROAD_RIGHT_CURVE = 3
 ROAD_FORK = 4
 ROAD_CROSS = 5
-ROAD_T_LEFT = 6
-ROAD_T_RIGHT = 7
 ROAD_FINISH = 8
+
+ZONE_BOOT_LOCAL = 0
+ZONE_DEAD_END_FILTER = 1
+ZONE_MIRROR_DISCOVERY = 2
+ZONE_S_CURVE = 3
+ZONE_RECT_ZONE = 4
+ZONE_CIRCLE_RECT = 5
+ZONE_FINISH_APPROACH = 6
+
+ZONE_NAMES = [
+    "BOOT",
+    "DEAD",
+    "MIRROR",
+    "S",
+    "RECT",
+    "CIRCLE",
+    "FINISH",
+]
 
 LINE_SPEED = 320
 LINE_MIN_SPEED = 180
+LINE_BOOT_SPEED = 170
 LINE_LOOP_SPEED = 190
-LINE_EXIT_SPEED = 180
+LINE_COMPLEX_SPEED = 155
+LINE_FINISH_SPEED = 150
 LINE_MAX_YAW = 1800
-LINE_KP = 14
+LINE_KP = 11
+LINE_PREVIEW_KP = 9
 LINE_KD = 5
-ROUTE_LOCK_MS = 700
-ROUTE_CONFIRM_FRAMES = 2
-ROUTE_MIN_CONFIDENCE = 70
 
 SEARCH_SPEED = 120
 SEARCH_YAW = 900
@@ -82,11 +102,27 @@ GATE_PAIR_Y_TOL_MM = 250
 GATE_WIDTH_MIN_MM = 300
 GATE_WIDTH_MAX_MM = 1600
 
-AVOID_SPEED = 350
-AVOID_YAW = 1600
+AVOID_SPEED = 260
+AVOID_YAW = 1100
 AVOID_ENTRY_MS = 700
 AVOID_PASS_MS = 900
 AVOID_RECOVER_MS = 650
+
+# 这些里程窗口来自赛道图尺寸，是现场调参入口，不作为唯一判据。
+ZONE_BOOT_END_MM = 450
+ZONE_DEAD_END_END_MM = 2500
+ZONE_MIRROR_END_MM = 4700
+ZONE_S_END_MM = 6100
+ZONE_RECT_END_MM = 8000
+ZONE_CIRCLE_END_MM = 10300
+
+PATH_MAX_LINK_DX = 58
+PATH_MIN_WIDTH = 3
+PATH_MAX_WIDTH = 105
+PATH_MIN_PIXELS = 8
+DEAD_STUB_MIN_ROWS = 4
+TANGENT_LOCK_MS = 420
+MIRROR_LOCK_SCORE = 210
 
 
 def ticks_ms():
@@ -102,6 +138,18 @@ def clamp(value, low, high):
     if value > high:
         return high
     return value
+
+
+def sign(value):
+    if value > 0:
+        return 1
+    if value < 0:
+        return -1
+    return 0
+
+
+def norm_offset(x):
+    return int(clamp(((x - CENTER_X) * 127) // IMG_W, -64, 63))
 
 
 def crc16(data):
@@ -142,11 +190,32 @@ def get_i32(buf, offset):
     return value
 
 
-def blob_cx(blob):
+def blob_value(blob, name, default=0):
     try:
-        return blob.cx()
+        attr = getattr(blob, name)
+        return attr() if callable(attr) else attr
     except Exception:
-        return blob.x() + blob.w() // 2
+        return default
+
+
+def blob_x(blob):
+    return blob_value(blob, "x", 0)
+
+
+def blob_y(blob):
+    return blob_value(blob, "y", 0)
+
+
+def blob_w(blob):
+    return blob_value(blob, "w", 0)
+
+
+def blob_h(blob):
+    return blob_value(blob, "h", 0)
+
+
+def blob_pixels(blob):
+    return blob_value(blob, "pixels", blob_w(blob) * blob_h(blob))
 
 
 class CameraAcq:
@@ -166,7 +235,6 @@ class UartLink:
         self.telemetry = None
         self.last_telemetry_ms = 0
         self.seq = 0
-        self.pending_checkpoint = 0
 
     def poll(self):
         data = self.serial.read()
@@ -243,92 +311,51 @@ class UartLink:
         self.seq = (self.seq + 1) & 0xFF
 
 
-class LineDetector:
+class ScanlineExtractor:
     def __init__(self):
-        self.last_offset = 0
+        self.last_rows = []
 
     def _find_blobs(self, img, roi):
         try:
-            return img.find_blobs([BLACK_LINE_LAB], roi=roi, pixels_threshold=25,
-                                  area_threshold=35, merge=True, margin=8)
+            return img.find_blobs([BLACK_LINE_LAB], roi=roi, pixels_threshold=PATH_MIN_PIXELS,
+                                  area_threshold=PATH_MIN_PIXELS, merge=True, margin=4)
         except Exception:
             return img.find_blobs(thresholds=[BLACK_LINE_LAB], roi=roi,
-                                  pixels_threshold=25, area_threshold=35,
-                                  merge=True, margin=8)
+                                  pixels_threshold=PATH_MIN_PIXELS,
+                                  area_threshold=PATH_MIN_PIXELS, merge=True, margin=4)
 
-    def _select_blob(self, blobs, preference):
-        if not blobs:
-            return None, 0
-        ordered = sorted(blobs, key=lambda b: blob_cx(b))
-        if preference == PREF_LEFT:
-            return ordered[0], 0
-        if preference == PREF_RIGHT:
-            return ordered[-1], len(ordered) - 1
-        selected = min(ordered, key=lambda b: abs(blob_cx(b) - CENTER_X))
-        return selected, ordered.index(selected)
-
-    def detect(self, img, preference):
-        near = self._find_blobs(img, ROI_NEAR)
-        mid = self._find_blobs(img, ROI_MID)
-        far = self._find_blobs(img, ROI_FAR)
-        selected, selected_index = self._select_blob(near, preference)
-
-        if selected is None:
-            return {
-                "valid": False,
-                "offset": self.last_offset,
-                "confidence": 0,
-                "segments": len(near),
-                "selected": 0,
-                "road": ROAD_UNKNOWN,
-            }
-
-        center = blob_cx(selected)
-        offset = int(clamp(((center - CENTER_X) * 127) // IMG_W, -64, 63))
-        self.last_offset = offset
-
-        confidence = 45
-        if selected.pixels() > 60:
-            confidence += 15
-        if selected.h() > 10:
-            confidence += 10
-        if mid:
-            confidence += 15
-        if far:
-            confidence += 15
-        confidence = int(clamp(confidence, 0, 100))
-
-        road = ROAD_STRAIGHT
-        if len(near) >= 2:
-            left_seen = any(blob_cx(b) < CENTER_X - 35 for b in near)
-            right_seen = any(blob_cx(b) > CENTER_X + 35 for b in near)
-            if left_seen and right_seen:
-                road = ROAD_FORK
-            elif left_seen:
-                road = ROAD_T_LEFT
-            elif right_seen:
-                road = ROAD_T_RIGHT
-        elif mid or far:
-            samples = []
-            if mid:
-                samples.append(blob_cx(max(mid, key=lambda b: b.pixels())))
-            if far:
-                samples.append(blob_cx(max(far, key=lambda b: b.pixels())))
-            if samples:
-                dx = (sum(samples) // len(samples)) - center
-                if dx < -18:
-                    road = ROAD_LEFT_CURVE
-                elif dx > 18:
-                    road = ROAD_RIGHT_CURVE
-
-        return {
-            "valid": True,
-            "offset": offset,
-            "confidence": confidence,
-            "segments": len(near),
-            "selected": selected_index,
-            "road": road,
-        }
+    def extract(self, img):
+        rows = []
+        for row_index, roi in enumerate(SCAN_BANDS):
+            segments = []
+            blobs = self._find_blobs(img, roi)
+            for blob in blobs:
+                x = int(blob_x(blob))
+                y = int(blob_y(blob))
+                w = int(blob_w(blob))
+                h = int(blob_h(blob))
+                pixels = int(blob_pixels(blob))
+                if w < PATH_MIN_WIDTH or w > PATH_MAX_WIDTH or pixels < PATH_MIN_PIXELS:
+                    continue
+                segments.append({
+                    "row": row_index,
+                    "x": x,
+                    "y": y,
+                    "w": w,
+                    "h": h,
+                    "cx": x + w // 2,
+                    "cy": y + h // 2,
+                    "pixels": pixels,
+                    "used": False,
+                })
+            rows.append({
+                "index": row_index,
+                "roi": roi,
+                "y": roi[1] + roi[3] // 2,
+                "segments": sorted(segments, key=lambda s: s["cx"]),
+            })
+        self.last_rows = rows
+        return rows
 
     def finish_detected(self, img):
         try:
@@ -341,78 +368,297 @@ class LineDetector:
         return bool(blobs)
 
 
-class RoutePlanner:
+class PathGraph:
+    def build(self, rows):
+        starts = []
+        for row in rows[:3]:
+            for seg in row["segments"]:
+                starts.append(seg)
+            if starts:
+                break
+
+        paths = []
+        for start in starts:
+            path = [start]
+            last_dx = 0
+            for row in rows[start["row"] + 1:]:
+                last = path[-1]
+                predicted_x = last["cx"] + last_dx
+                best = None
+                best_score = 10000
+                for seg in row["segments"]:
+                    dx = seg["cx"] - predicted_x
+                    if abs(dx) > PATH_MAX_LINK_DX:
+                        continue
+                    score = abs(dx) + abs(seg["w"] - last["w"]) * 0.3
+                    if score < best_score:
+                        best = seg
+                        best_score = score
+                if best is None:
+                    continue
+                last_dx = best["cx"] - last["cx"]
+                path.append(best)
+            paths.append(self._summarize(path, rows))
+
+        # 远端才出现的线段也可能是主线预瞄，保留少量候选用于调试和评分。
+        for row in rows[1:4]:
+            for seg in row["segments"]:
+                if not any(p["points"][0] is seg for p in paths):
+                    paths.append(self._summarize([seg], rows))
+
+        paths = sorted(paths, key=lambda p: (p["rows"], -abs(p["offset"])), reverse=True)
+        return paths[:10]
+
+    def _summarize(self, points, rows):
+        near = points[0]
+        far = points[-1]
+        lookahead = points[min(len(points) - 1, max(0, len(points) // 2))]
+        dx_values = []
+        for i in range(1, len(points)):
+            dx_values.append(points[i]["cx"] - points[i - 1]["cx"])
+
+        curvature = 0
+        for i in range(1, len(dx_values)):
+            curvature += abs(dx_values[i] - dx_values[i - 1])
+
+        span_x = 0
+        if points:
+            xs = [p["cx"] for p in points]
+            span_x = max(xs) - min(xs)
+
+        branches = sum(1 for row in rows if len(row["segments"]) >= 2)
+        far_reach = far["row"] >= (len(rows) - 3)
+        dead_stub = (len(points) < DEAD_STUB_MIN_ROWS) or ((not far_reach) and branches >= 2)
+        loop_score = 0
+        if len(points) >= 4 and curvature > 55 and span_x > 55:
+            loop_score = min(100, curvature + span_x // 2)
+
+        heading = far["cx"] - near["cx"]
+        road = ROAD_STRAIGHT
+        if branches >= 3:
+            road = ROAD_CROSS
+        elif branches >= 2:
+            road = ROAD_FORK
+        elif heading < -24:
+            road = ROAD_LEFT_CURVE
+        elif heading > 24:
+            road = ROAD_RIGHT_CURVE
+
+        return {
+            "points": points,
+            "rows": len(points),
+            "near_x": near["cx"],
+            "near_y": near["cy"],
+            "lookahead_x": lookahead["cx"],
+            "lookahead_y": lookahead["cy"],
+            "far_x": far["cx"],
+            "far_y": far["cy"],
+            "offset": norm_offset(near["cx"]),
+            "lookahead_offset": norm_offset(lookahead["cx"]),
+            "heading": heading,
+            "curvature": curvature,
+            "span_x": span_x,
+            "branches": branches,
+            "dead_stub": dead_stub,
+            "loop_score": loop_score,
+            "road": road,
+            "score": 0,
+        }
+
+
+class ZonePlanner:
     def __init__(self):
+        self.zone = ZONE_BOOT_LOCAL
         self.route_step = 0
-        self.route_event_frames = 0
-        self.lock_until_ms = 0
-        self.last_bias = 0
-        self.search_frames = 0
-        self.lost_frames = 0
-        self.route_steps = [
-            (PREF_LEFT, LINE_EXIT_SPEED),
-            (PREF_RIGHT, LINE_EXIT_SPEED),
-            (PREF_NEAREST, LINE_LOOP_SPEED),
-            (PREF_NEAREST, LINE_LOOP_SPEED),
-            (PREF_NEAREST, LINE_MIN_SPEED),
-        ]
+        self.map_sign = 0
+        self.mirror_score = 0
+        self.tangent_lock_until = 0
+        self.tangent_lock_x = CENTER_X
+        self.last_zone = self.zone
 
-    def preference(self):
-        if self.route_step < len(self.route_steps):
-            return self.route_steps[self.route_step][0]
-        return PREF_NEAREST
-
-    def _speed_limit(self, line):
-        if self.route_step < len(self.route_steps):
-            limit = self.route_steps[self.route_step][1]
+    def update_from_telemetry(self, telemetry):
+        distance = telemetry["distance_mm"] if telemetry else 0
+        if distance < ZONE_BOOT_END_MM:
+            self.zone = ZONE_BOOT_LOCAL
+        elif distance < ZONE_DEAD_END_END_MM:
+            self.zone = ZONE_DEAD_END_FILTER
+        elif distance < ZONE_MIRROR_END_MM:
+            self.zone = ZONE_MIRROR_DISCOVERY
+        elif distance < ZONE_S_END_MM:
+            self.zone = ZONE_S_CURVE
+        elif distance < ZONE_RECT_END_MM:
+            self.zone = ZONE_RECT_ZONE
+        elif distance < ZONE_CIRCLE_END_MM:
+            self.zone = ZONE_CIRCLE_RECT
         else:
-            limit = LINE_MIN_SPEED
-        if line["road"] in (ROAD_LEFT_CURVE, ROAD_RIGHT_CURVE, ROAD_FORK, ROAD_CROSS):
-            limit = min(limit, LINE_LOOP_SPEED)
-        offset_abs = abs(line["offset"])
-        if offset_abs > 14:
-            limit -= (offset_abs - 14) * 6
-        return int(clamp(limit, LINE_MIN_SPEED, LINE_SPEED))
+            self.zone = ZONE_FINISH_APPROACH
 
-    def update_route(self, line, now):
-        route_event = (line["valid"] and
-                       line["confidence"] >= ROUTE_MIN_CONFIDENCE and
-                       (line["segments"] >= 2 or line["road"] in
-                        (ROAD_FORK, ROAD_CROSS, ROAD_T_LEFT, ROAD_T_RIGHT)))
-        if route_event:
-            self.route_event_frames += 1
-        else:
-            self.route_event_frames = 0
+        if self.zone != self.last_zone:
+            self.last_zone = self.zone
+            self.route_step = self.zone
 
-        if now < self.lock_until_ms:
+    def update_after_path(self, path, now):
+        if path is None:
             return
 
-        if self.route_event_frames >= ROUTE_CONFIRM_FRAMES and self.route_step < len(self.route_steps):
-            self.route_step += 1
-            self.route_event_frames = 0
-            self.lock_until_ms = now + ROUTE_LOCK_MS
+        if self.zone == ZONE_MIRROR_DISCOVERY and self.map_sign == 0:
+            # U 型弯里累计曲率和远端偏移方向，锁定镜像手性。
+            curve_vote = sign(path["heading"]) * max(1, abs(path["heading"]))
+            curve_vote += sign(path["lookahead_offset"]) * max(0, abs(path["lookahead_offset"]) // 2)
+            self.mirror_score += curve_vote
+            if self.mirror_score >= MIRROR_LOCK_SCORE:
+                self.map_sign = 1
+            elif self.mirror_score <= -MIRROR_LOCK_SCORE:
+                self.map_sign = -1
 
-    def command_from_line(self, line):
+        if self.zone == ZONE_CIRCLE_RECT:
+            if path["loop_score"] > 60 or path["curvature"] > 70:
+                self.tangent_lock_until = now + TANGENT_LOCK_MS
+                self.tangent_lock_x = path["near_x"]
+
+    def tangent_locked(self, now):
+        return now < self.tangent_lock_until
+
+    def speed_limit(self, line):
+        if self.zone in (ZONE_BOOT_LOCAL, ZONE_DEAD_END_FILTER, ZONE_MIRROR_DISCOVERY):
+            base = LINE_BOOT_SPEED
+        elif self.zone in (ZONE_RECT_ZONE, ZONE_CIRCLE_RECT):
+            base = LINE_COMPLEX_SPEED
+        elif self.zone == ZONE_FINISH_APPROACH:
+            base = LINE_FINISH_SPEED
+        else:
+            base = LINE_LOOP_SPEED
+
+        offset_abs = abs(line["offset"])
+        if offset_abs > 14:
+            base -= (offset_abs - 14) * 5
+        return int(clamp(base, LINE_MIN_SPEED, LINE_SPEED))
+
+
+class PathScorer:
+    def __init__(self):
+        self.last_selected_x = CENTER_X
+        self.last_heading = 0
+
+    def select(self, paths, zone_planner, now):
+        best = None
+        best_score = -100000
+        for path in paths:
+            score = self._score_path(path, zone_planner, now)
+            path["score"] = score
+            if score > best_score:
+                best = path
+                best_score = score
+
+        if best is not None:
+            self.last_selected_x = best["near_x"]
+            self.last_heading = best["heading"]
+        return best
+
+    def _score_path(self, path, zone_planner, now):
+        score = 0
+        score += path["rows"] * 35
+        score += max(0, path["points"][-1]["row"] - 2) * 12
+        score -= abs(path["offset"]) * 1.5
+        score -= abs(path["lookahead_offset"]) * 0.6
+        score -= abs(path["near_x"] - self.last_selected_x) * 0.9
+        score -= abs(path["heading"] - self.last_heading) * 0.4
+
+        if path["dead_stub"]:
+            if zone_planner.zone in (ZONE_DEAD_END_FILTER, ZONE_BOOT_LOCAL, ZONE_MIRROR_DISCOVERY):
+                score -= 220
+            else:
+                score -= 90
+
+        if zone_planner.zone == ZONE_RECT_ZONE:
+            # 矩形区允许短时直角，但必须优先远端可延续和历史航向。
+            score += path["rows"] * 12
+            score -= max(0, path["curvature"] - 90) * 1.2
+            if zone_planner.map_sign != 0 and sign(path["far_x"] - CENTER_X) == zone_planner.map_sign:
+                score += 18
+
+        if zone_planner.zone == ZONE_CIRCLE_RECT:
+            # 连续相切圆会形成闭环，不能只按连续长度选择圆周。
+            score -= path["loop_score"] * 2.0
+            score -= max(0, path["curvature"] - 80) * 0.8
+            if zone_planner.map_sign != 0:
+                expected_exit = zone_planner.map_sign
+                if sign(path["lookahead_x"] - CENTER_X) == expected_exit:
+                    score += 22
+                else:
+                    score -= 18
+            if zone_planner.tangent_locked(now):
+                score -= abs(path["near_x"] - zone_planner.tangent_lock_x) * 2.2
+
+        if zone_planner.zone == ZONE_FINISH_APPROACH:
+            # 终点前保持保守，优先历史路径和近端稳定。
+            score -= max(0, abs(path["heading"]) - 55) * 1.5
+
+        return score
+
+
+class CommandPlanner:
+    def __init__(self):
+        self.last_bias = 0
+        self.last_valid_bias = 0
+        self.lost_frames = 0
+        self.search_frames = 0
+
+    def make_line(self, path, paths):
+        if path is None:
+            return {
+                "valid": False,
+                "offset": self.last_valid_bias,
+                "lookahead_offset": self.last_valid_bias,
+                "confidence": 0,
+                "road": ROAD_UNKNOWN,
+                "path": None,
+                "paths": paths,
+            }
+
+        confidence = 35 + path["rows"] * 8
+        if not path["dead_stub"]:
+            confidence += 15
+        if path["loop_score"] == 0:
+            confidence += 8
+        confidence -= min(25, int(abs(path["offset"]) * 0.35))
+        confidence = int(clamp(confidence, 0, 100))
+
+        return {
+            "valid": True,
+            "offset": path["offset"],
+            "lookahead_offset": path["lookahead_offset"],
+            "confidence": confidence,
+            "road": path["road"],
+            "path": path,
+            "paths": paths,
+        }
+
+    def command_from_line(self, line, zone_planner):
         if not line["valid"]:
             self.lost_frames += 1
             if self.lost_frames <= LOST_HOLD_FRAMES:
-                return LINE_MIN_SPEED, self.last_bias * LINE_KP, 0
+                return LINE_MIN_SPEED, self.last_valid_bias * LINE_KP, 0
             if self.search_frames < SEARCH_FRAMES:
                 self.search_frames += 1
-                yaw = SEARCH_YAW if self.last_bias >= 0 else -SEARCH_YAW
+                yaw = SEARCH_YAW if self.last_valid_bias >= 0 else -SEARCH_YAW
                 return SEARCH_SPEED, yaw, 0
             return 0, 0, 0
 
         self.lost_frames = 0
         self.search_frames = 0
         bias = line["offset"]
-        yaw = bias * LINE_KP + (bias - self.last_bias) * LINE_KD
+        preview = line["lookahead_offset"]
+        yaw = bias * LINE_KP + preview * LINE_PREVIEW_KP + (bias - self.last_bias) * LINE_KD
+
         if line["road"] == ROAD_LEFT_CURVE:
-            yaw -= 150
+            yaw -= 120
         elif line["road"] == ROAD_RIGHT_CURVE:
-            yaw += 150
+            yaw += 120
+
         self.last_bias = bias
-        return self._speed_limit(line), int(clamp(yaw, -LINE_MAX_YAW, LINE_MAX_YAW)), CMD_FLAG_LINE_VALID
+        self.last_valid_bias = bias
+        return zone_planner.speed_limit(line), int(clamp(yaw, -LINE_MAX_YAW, LINE_MAX_YAW)), CMD_FLAG_LINE_VALID
 
 
 class GateDetector:
@@ -493,7 +739,7 @@ class GateDetector:
 class ObstaclePlanner:
     def __init__(self):
         self.active = False
-        self.side = PREF_LEFT
+        self.side = 1
         self.phase = 0
         self.phase_start = 0
 
@@ -510,7 +756,8 @@ class ObstaclePlanner:
                     left_score += 1
                 elif target["x_mm"] > 120:
                     right_score += 1
-        self.side = PREF_RIGHT if left_score > right_score else PREF_LEFT
+        # 雷达只做辅助，默认向目标较少的一侧轻微绕行。
+        self.side = 1 if left_score > right_score else -1
         self.active = True
         self.phase = 0
         self.phase_start = now
@@ -519,7 +766,7 @@ class ObstaclePlanner:
         if not self.active:
             return None
         elapsed = now - self.phase_start
-        turn = AVOID_YAW if self.side == PREF_LEFT else -AVOID_YAW
+        turn = AVOID_YAW * self.side
         if self.phase == 0:
             if elapsed >= AVOID_ENTRY_MS:
                 self.phase = 1
@@ -536,18 +783,40 @@ class ObstaclePlanner:
         return AVOID_SPEED, -turn // 2
 
 
-class DebugView:
+class SimpleDebugView:
     def __init__(self):
         self.disp = display.Display()
 
-    def show(self, img, line, route_step, mode, telemetry):
+    def show(self, img, rows, line, zone_planner, mode, telemetry):
         try:
-            state = "M{} R{} C{}".format(mode, route_step, line["confidence"])
+            zone = ZONE_NAMES[zone_planner.zone]
+            path_count = len(line.get("paths", []))
+            state = "M{} {} R{} S{} P{} C{}".format(mode, zone, zone_planner.route_step,
+                                                    zone_planner.map_sign, path_count,
+                                                    line["confidence"])
             img.draw_string(2, 2, state, image.COLOR_GREEN)
             if telemetry:
                 img.draw_string(2, 18, "D{} B{}%".format(telemetry["distance_mm"],
                                                           telemetry["battery_percent"]),
                                 image.COLOR_BLUE)
+            for row in rows:
+                for seg in row["segments"]:
+                    try:
+                        img.draw_rectangle([seg["x"], seg["y"], seg["w"], seg["h"]], image.COLOR_RED)
+                    except Exception:
+                        pass
+            path = line.get("path")
+            if path:
+                points = path["points"]
+                for i in range(1, len(points)):
+                    p0 = points[i - 1]
+                    p1 = points[i]
+                    try:
+                        img.draw_line(p0["cx"], p0["cy"], p1["cx"], p1["cy"], image.COLOR_GREEN)
+                    except Exception:
+                        pass
+            if zone_planner.tangent_locked(ticks_ms()):
+                img.draw_string(2, 34, "TANGENT", image.COLOR_RED)
             self.disp.show(img)
         except Exception:
             pass
@@ -556,11 +825,14 @@ class DebugView:
 def main():
     cam = CameraAcq()
     link = UartLink()
-    detector = LineDetector()
-    route = RoutePlanner()
+    extractor = ScanlineExtractor()
+    graph = PathGraph()
+    zone = ZonePlanner()
+    scorer = PathScorer()
+    command_planner = CommandPlanner()
     gate = GateDetector()
     obstacle = ObstaclePlanner()
-    debug = DebugView()
+    debug = SimpleDebugView()
     pending_checkpoint = 0
     checkpoint_status_armed = False
 
@@ -570,13 +842,19 @@ def main():
         now = ticks_ms()
 
         if telemetry is None or not link.started():
-            link.send_command(MODE_IDLE, 0, 0, 0, route.route_step, 0, 0)
-            debug.show(img, {"confidence": 0}, route.route_step, MODE_IDLE, telemetry)
+            link.send_command(MODE_IDLE, 0, 0, 0, zone.route_step, 0, 0)
+            empty_line = {"confidence": 0, "path": None}
+            debug.show(img, [], empty_line, zone, MODE_IDLE, telemetry)
             time.sleep_ms(5)
             continue
 
-        line = detector.detect(img, route.preference())
-        route.update_route(line, now)
+        zone.update_from_telemetry(telemetry)
+        rows = extractor.extract(img)
+        paths = graph.build(rows)
+        selected = scorer.select(paths, zone, now)
+        line = command_planner.make_line(selected, paths)
+        zone.update_after_path(selected, now)
+
         gate_event = gate.update(telemetry, now)
         if gate_event in (1, 2):
             pending_checkpoint = gate_event
@@ -593,22 +871,24 @@ def main():
                 checkpoint_status_armed = False
                 checkpoint = 0
 
-        if route.route_step >= len(route.route_steps) and detector.finish_detected(img):
+        if zone.zone == ZONE_FINISH_APPROACH and extractor.finish_detected(img):
             flags = CMD_FLAG_FINISH
-            link.send_command(MODE_FINISH, 0, 0, flags, route.route_step, 0, 100)
-            debug.show(img, line, route.route_step, MODE_FINISH, telemetry)
+            link.send_command(MODE_FINISH, 0, 0, flags, zone.route_step, 0, 100)
+            debug.show(img, rows, line, zone, MODE_FINISH, telemetry)
             time.sleep_ms(5)
             continue
 
         avoid_cmd = obstacle.command(now)
-        if avoid_cmd:
+        if avoid_cmd and zone.zone == ZONE_CIRCLE_RECT:
             vx, yaw = avoid_cmd
             flags = CMD_FLAG_AVOIDING
+            confidence = max(40, line["confidence"])
         else:
-            vx, yaw, flags = route.command_from_line(line)
+            vx, yaw, flags = command_planner.command_from_line(line, zone)
+            confidence = line["confidence"]
 
-        link.send_command(MODE_RUN, vx, yaw, flags, route.route_step, checkpoint, line["confidence"])
-        debug.show(img, line, route.route_step, MODE_RUN, telemetry)
+        link.send_command(MODE_RUN, vx, yaw, flags, zone.route_step, checkpoint, confidence)
+        debug.show(img, rows, line, zone, MODE_RUN, telemetry)
         time.sleep_ms(5)
 
 
