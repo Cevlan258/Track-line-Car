@@ -26,7 +26,11 @@ SCAN_BANDS = [
 FINISH_ROI = [30, 70, 260, 145]
 
 BLACK_LINE_LAB = [0, 38, -18, 18, -18, 18]
+WHITE_TRACK_LAB = [65, 100, -22, 22, -22, 28]
 RED_FINISH_LAB = [25, 85, 20, 80, 5, 70]
+DYNAMIC_THRESHOLD_ROI = [0, 54, IMG_W, 176]
+MIN_WHITE_L = 35
+MAX_BLACK_L = 58
 
 HEAD_0 = 0xA6
 HEAD_1 = 0x6A
@@ -75,7 +79,7 @@ ZONE_NAMES = [
 ]
 
 LINE_SPEED = 320
-LINE_MIN_SPEED = 180
+LINE_MIN_SPEED = 150
 LINE_BOOT_SPEED = 170
 LINE_LOOP_SPEED = 190
 LINE_COMPLEX_SPEED = 155
@@ -120,9 +124,20 @@ PATH_MAX_LINK_DX = 58
 PATH_MIN_WIDTH = 3
 PATH_MAX_WIDTH = 105
 PATH_MIN_PIXELS = 8
+SIDE_SAMPLE_WIDTH = 8
+SIDE_SAMPLE_MARGIN = 2
+MIN_WHITE_SIDE_PIXELS = 6
+MIN_WHITE_SIDE_AREA_RATIO = 0.15
 DEAD_STUB_MIN_ROWS = 4
 TANGENT_LOCK_MS = 420
 MIRROR_LOCK_SCORE = 210
+TRACK_PROFILE_LEFT = "left"
+TRACK_SIGN_LEFT = -1
+TRACK_FIXED_MAP_SIGN = TRACK_SIGN_LEFT
+TRACK_SIDE_BONUS = 34
+TRACK_SIDE_PENALTY = 28
+TRACK_FAR_BONUS = 22
+TRACK_FAR_PENALTY = 18
 
 
 def ticks_ms():
@@ -145,6 +160,17 @@ def sign(value):
         return 1
     if value < 0:
         return -1
+    return 0
+
+
+def side_score(x, expected_sign, bonus, penalty):
+    if expected_sign == 0:
+        return 0
+    actual_sign = sign(x - CENTER_X)
+    if actual_sign == expected_sign:
+        return bonus
+    if actual_sign == -expected_sign:
+        return -penalty
     return 0
 
 
@@ -216,6 +242,70 @@ def blob_h(blob):
 
 def blob_pixels(blob):
     return blob_value(blob, "pixels", blob_w(blob) * blob_h(blob))
+
+
+def stats_value(stats, name, default=0):
+    try:
+        attr = getattr(stats, name)
+        return attr() if callable(attr) else attr
+    except Exception:
+        return default
+
+
+def build_line_threshold(img):
+    try:
+        stats = img.get_statistics(roi=DYNAMIC_THRESHOLD_ROI)
+        mean_l = stats_value(stats, "l_mean", BLACK_LINE_LAB[1] + 12)
+        black_l_max = int(clamp(mean_l - 12, BLACK_LINE_LAB[1], MAX_BLACK_L))
+        return [
+            BLACK_LINE_LAB[0],
+            black_l_max,
+            BLACK_LINE_LAB[2],
+            BLACK_LINE_LAB[3],
+            BLACK_LINE_LAB[4],
+            BLACK_LINE_LAB[5],
+        ]
+    except Exception:
+        return BLACK_LINE_LAB
+
+
+def build_white_threshold(img):
+    try:
+        stats = img.get_statistics(roi=DYNAMIC_THRESHOLD_ROI)
+        mean_l = stats_value(stats, "l_mean", WHITE_TRACK_LAB[0] + 12)
+        white_l_min = int(clamp(mean_l - 12, MIN_WHITE_L, WHITE_TRACK_LAB[0]))
+        return [
+            white_l_min,
+            WHITE_TRACK_LAB[1],
+            WHITE_TRACK_LAB[2],
+            WHITE_TRACK_LAB[3],
+            WHITE_TRACK_LAB[4],
+            WHITE_TRACK_LAB[5],
+        ]
+    except Exception:
+        return WHITE_TRACK_LAB
+
+
+def safe_roi(x, y, w, h):
+    x = int(clamp(x, 0, IMG_W - 1))
+    y = int(clamp(y, 0, IMG_H - 1))
+    w = int(clamp(w, 0, IMG_W - x))
+    h = int(clamp(h, 0, IMG_H - y))
+    if w <= 0 or h <= 0:
+        return None
+    return [x, y, w, h]
+
+
+def rgb(r, g, b):
+    try:
+        return image.Color.from_rgb(r, g, b)
+    except Exception:
+        return (r, g, b)
+
+
+COLOR_RED = rgb(255, 0, 0)
+COLOR_GREEN = rgb(0, 255, 0)
+COLOR_BLUE = rgb(0, 0, 255)
 
 
 class CameraAcq:
@@ -314,21 +404,70 @@ class UartLink:
 class ScanlineExtractor:
     def __init__(self):
         self.last_rows = []
+        self.black_threshold = BLACK_LINE_LAB
+        self.white_threshold = WHITE_TRACK_LAB
 
-    def _find_blobs(self, img, roi):
+    def _find_blobs(self, img, roi, threshold):
         try:
-            return img.find_blobs([BLACK_LINE_LAB], roi=roi, pixels_threshold=PATH_MIN_PIXELS,
+            return img.find_blobs([threshold], roi=roi, pixels_threshold=PATH_MIN_PIXELS,
                                   area_threshold=PATH_MIN_PIXELS, merge=True, margin=4)
         except Exception:
-            return img.find_blobs(thresholds=[BLACK_LINE_LAB], roi=roi,
+            return img.find_blobs(thresholds=[threshold], roi=roi,
                                   pixels_threshold=PATH_MIN_PIXELS,
                                   area_threshold=PATH_MIN_PIXELS, merge=True, margin=4)
 
+    def _find_white_blobs(self, img, roi):
+        if roi is None:
+            return []
+        try:
+            return img.find_blobs([self.white_threshold], roi=roi,
+                                  pixels_threshold=MIN_WHITE_SIDE_PIXELS,
+                                  area_threshold=MIN_WHITE_SIDE_PIXELS,
+                                  merge=True, margin=2)
+        except Exception:
+            return img.find_blobs(thresholds=[self.white_threshold], roi=roi,
+                                  pixels_threshold=MIN_WHITE_SIDE_PIXELS,
+                                  area_threshold=MIN_WHITE_SIDE_PIXELS,
+                                  merge=True, margin=2)
+
+    def roi_has_white_track(self, img, roi):
+        if roi is None:
+            return False
+        blobs = self._find_white_blobs(img, roi)
+        white_pixels = 0
+        for blob in blobs:
+            white_pixels += int(blob_pixels(blob))
+        return white_pixels >= int(roi[2] * roi[3] * MIN_WHITE_SIDE_AREA_RATIO)
+
+    def line_has_white_side(self, img, x, y, w, h, roi):
+        side_y = y + h // 4
+        side_h = max(4, h // 2)
+        roi_x, roi_y, roi_w, roi_h = roi
+        roi_right = roi_x + roi_w
+        roi_bottom = roi_y + roi_h
+
+        side_y = int(clamp(side_y, roi_y, roi_bottom - 1))
+        side_h = int(clamp(side_h, 1, roi_bottom - side_y))
+
+        left_x = x - SIDE_SAMPLE_MARGIN - SIDE_SAMPLE_WIDTH
+        right_x = x + w + SIDE_SAMPLE_MARGIN
+        left_ok = False
+        right_ok = False
+
+        if left_x >= roi_x:
+            left_ok = self.roi_has_white_track(img, safe_roi(left_x, side_y, SIDE_SAMPLE_WIDTH, side_h))
+        if (right_x + SIDE_SAMPLE_WIDTH) <= roi_right:
+            right_ok = self.roi_has_white_track(img, safe_roi(right_x, side_y, SIDE_SAMPLE_WIDTH, side_h))
+
+        return left_ok or right_ok
+
     def extract(self, img):
         rows = []
+        self.black_threshold = build_line_threshold(img)
+        self.white_threshold = build_white_threshold(img)
         for row_index, roi in enumerate(SCAN_BANDS):
             segments = []
-            blobs = self._find_blobs(img, roi)
+            blobs = self._find_blobs(img, roi, self.black_threshold)
             for blob in blobs:
                 x = int(blob_x(blob))
                 y = int(blob_y(blob))
@@ -336,6 +475,8 @@ class ScanlineExtractor:
                 h = int(blob_h(blob))
                 pixels = int(blob_pixels(blob))
                 if w < PATH_MIN_WIDTH or w > PATH_MAX_WIDTH or pixels < PATH_MIN_PIXELS:
+                    continue
+                if not self.line_has_white_side(img, x, y, w, h, roi):
                     continue
                 segments.append({
                     "row": row_index,
@@ -369,6 +510,12 @@ class ScanlineExtractor:
 
 
 class PathGraph:
+    def path_contains_segment(self, path, segment):
+        for point in path["points"]:
+            if point is segment:
+                return True
+        return False
+
     def build(self, rows):
         starts = []
         for row in rows[:3]:
@@ -403,7 +550,7 @@ class PathGraph:
         # 远端才出现的线段也可能是主线预瞄，保留少量候选用于调试和评分。
         for row in rows[1:4]:
             for seg in row["segments"]:
-                if not any(p["points"][0] is seg for p in paths):
+                if not any(self.path_contains_segment(path, seg) for path in paths):
                     paths.append(self._summarize([seg], rows))
 
         paths = sorted(paths, key=lambda p: (p["rows"], -abs(p["offset"])), reverse=True)
@@ -470,7 +617,7 @@ class ZonePlanner:
     def __init__(self):
         self.zone = ZONE_BOOT_LOCAL
         self.route_step = 0
-        self.map_sign = 0
+        self.map_sign = TRACK_FIXED_MAP_SIGN
         self.mirror_score = 0
         self.tangent_lock_until = 0
         self.tangent_lock_x = CENTER_X
@@ -501,6 +648,9 @@ class ZonePlanner:
         if path is None:
             return
 
+        if TRACK_FIXED_MAP_SIGN != 0:
+            self.map_sign = TRACK_FIXED_MAP_SIGN
+
         if self.zone == ZONE_MIRROR_DISCOVERY and self.map_sign == 0:
             # U 型弯里累计曲率和远端偏移方向，锁定镜像手性。
             curve_vote = sign(path["heading"]) * max(1, abs(path["heading"]))
@@ -528,6 +678,15 @@ class ZonePlanner:
             base = LINE_FINISH_SPEED
         else:
             base = LINE_LOOP_SPEED
+
+        path = line.get("path")
+        if line.get("confidence", 100) < 60:
+            base = min(base, LINE_COMPLEX_SPEED)
+        if path is not None:
+            if path.get("branches", 0) >= 2 or len(line.get("paths", [])) >= 3:
+                base = min(base, LINE_COMPLEX_SPEED)
+            if path.get("curvature", 0) > 80:
+                base = min(base, LINE_COMPLEX_SPEED)
 
         offset_abs = abs(line["offset"])
         if offset_abs > 14:
@@ -563,6 +722,7 @@ class PathScorer:
         score -= abs(path["lookahead_offset"]) * 0.6
         score -= abs(path["near_x"] - self.last_selected_x) * 0.9
         score -= abs(path["heading"] - self.last_heading) * 0.4
+        score += self._fixed_map_score(path, zone_planner)
 
         if path["dead_stub"]:
             if zone_planner.zone in (ZONE_DEAD_END_FILTER, ZONE_BOOT_LOCAL, ZONE_MIRROR_DISCOVERY):
@@ -596,6 +756,19 @@ class PathScorer:
 
         return score
 
+    def _fixed_map_score(self, path, zone_planner):
+        if zone_planner.map_sign == 0:
+            return 0
+        if zone_planner.zone not in (ZONE_DEAD_END_FILTER, ZONE_MIRROR_DISCOVERY,
+                                     ZONE_RECT_ZONE, ZONE_CIRCLE_RECT):
+            return 0
+
+        score = side_score(path["lookahead_x"], zone_planner.map_sign,
+                           TRACK_SIDE_BONUS, TRACK_SIDE_PENALTY)
+        score += side_score(path["far_x"], zone_planner.map_sign,
+                            TRACK_FAR_BONUS, TRACK_FAR_PENALTY)
+        return score
+
 
 class CommandPlanner:
     def __init__(self):
@@ -605,34 +778,7 @@ class CommandPlanner:
         self.search_frames = 0
 
     def make_line(self, path, paths):
-        if path is None:
-            return {
-                "valid": False,
-                "offset": self.last_valid_bias,
-                "lookahead_offset": self.last_valid_bias,
-                "confidence": 0,
-                "road": ROAD_UNKNOWN,
-                "path": None,
-                "paths": paths,
-            }
-
-        confidence = 35 + path["rows"] * 8
-        if not path["dead_stub"]:
-            confidence += 15
-        if path["loop_score"] == 0:
-            confidence += 8
-        confidence -= min(25, int(abs(path["offset"]) * 0.35))
-        confidence = int(clamp(confidence, 0, 100))
-
-        return {
-            "valid": True,
-            "offset": path["offset"],
-            "lookahead_offset": path["lookahead_offset"],
-            "confidence": confidence,
-            "road": path["road"],
-            "path": path,
-            "paths": paths,
-        }
+        return make_line_from_path(path, paths, self.last_valid_bias)
 
     def command_from_line(self, line, zone_planner):
         if not line["valid"]:
@@ -641,7 +787,11 @@ class CommandPlanner:
                 return LINE_MIN_SPEED, self.last_valid_bias * LINE_KP, 0
             if self.search_frames < SEARCH_FRAMES:
                 self.search_frames += 1
-                yaw = SEARCH_YAW if self.last_valid_bias >= 0 else -SEARCH_YAW
+                if self.last_valid_bias == 0:
+                    search_sign = TRACK_FIXED_MAP_SIGN if TRACK_FIXED_MAP_SIGN != 0 else 1
+                else:
+                    search_sign = sign(self.last_valid_bias)
+                yaw = SEARCH_YAW * search_sign
                 return SEARCH_SPEED, yaw, 0
             return 0, 0, 0
 
@@ -659,6 +809,46 @@ class CommandPlanner:
         self.last_bias = bias
         self.last_valid_bias = bias
         return zone_planner.speed_limit(line), int(clamp(yaw, -LINE_MAX_YAW, LINE_MAX_YAW)), CMD_FLAG_LINE_VALID
+
+
+def make_line_from_path(path, paths, fallback_bias=0):
+    if path is None:
+        return {
+            "valid": False,
+            "offset": fallback_bias,
+            "lookahead_offset": fallback_bias,
+            "confidence": 0,
+            "road": ROAD_UNKNOWN,
+            "path": None,
+            "paths": paths,
+        }
+
+    confidence = 35 + path["rows"] * 8
+    if not path["dead_stub"]:
+        confidence += 15
+    if path["loop_score"] == 0:
+        confidence += 8
+    confidence -= min(25, int(abs(path["offset"]) * 0.35))
+    confidence = int(clamp(confidence, 0, 100))
+
+    return {
+        "valid": True,
+        "offset": path["offset"],
+        "lookahead_offset": path["lookahead_offset"],
+        "confidence": confidence,
+        "road": path["road"],
+        "path": path,
+        "paths": paths,
+    }
+
+
+def draw_scan_bands(img, rows):
+    for row in rows:
+        try:
+            x, y, w, h = row["roi"]
+            img.draw_rect(x, y, w, h, COLOR_BLUE)
+        except Exception:
+            pass
 
 
 class GateDetector:
@@ -791,18 +981,23 @@ class SimpleDebugView:
         try:
             zone = ZONE_NAMES[zone_planner.zone]
             path_count = len(line.get("paths", []))
-            state = "M{} {} R{} S{} P{} C{}".format(mode, zone, zone_planner.route_step,
-                                                    zone_planner.map_sign, path_count,
-                                                    line["confidence"])
-            img.draw_string(2, 2, state, image.COLOR_GREEN)
+            segment_count = line.get("segments", 0)
+            black_l = line.get("black_l_max", BLACK_LINE_LAB[1])
+            white_l = line.get("white_l_min", WHITE_TRACK_LAB[0])
+            state = "M{} {} R{} S{} P{} N{} C{} B{} W{}".format(mode, zone, zone_planner.route_step,
+                                                                zone_planner.map_sign, path_count,
+                                                                segment_count, line["confidence"],
+                                                                black_l, white_l)
+            img.draw_string(2, 2, state, COLOR_GREEN)
             if telemetry:
                 img.draw_string(2, 18, "D{} B{}%".format(telemetry["distance_mm"],
                                                           telemetry["battery_percent"]),
-                                image.COLOR_BLUE)
+                                COLOR_BLUE)
+            draw_scan_bands(img, rows)
             for row in rows:
                 for seg in row["segments"]:
                     try:
-                        img.draw_rectangle([seg["x"], seg["y"], seg["w"], seg["h"]], image.COLOR_RED)
+                        img.draw_rect(seg["x"], seg["y"], seg["w"], seg["h"], COLOR_RED)
                     except Exception:
                         pass
             path = line.get("path")
@@ -812,14 +1007,26 @@ class SimpleDebugView:
                     p0 = points[i - 1]
                     p1 = points[i]
                     try:
-                        img.draw_line(p0["cx"], p0["cy"], p1["cx"], p1["cy"], image.COLOR_GREEN)
+                        img.draw_line(p0["cx"], p0["cy"], p1["cx"], p1["cy"], COLOR_GREEN)
                     except Exception:
                         pass
             if zone_planner.tangent_locked(ticks_ms()):
-                img.draw_string(2, 34, "TANGENT", image.COLOR_RED)
+                img.draw_string(2, 34, "TANGENT", COLOR_RED)
             self.disp.show(img)
         except Exception:
             pass
+
+
+def run_vision_pipeline(img, extractor, graph, scorer, zone_planner, now, fallback_bias=0):
+    rows = extractor.extract(img)
+    paths = graph.build(rows)
+    selected = scorer.select(paths, zone_planner, now)
+    line = make_line_from_path(selected, paths, fallback_bias)
+    line["segments"] = sum(len(row["segments"]) for row in rows)
+    line["black_l_max"] = extractor.black_threshold[1]
+    line["white_l_min"] = extractor.white_threshold[0]
+    zone_planner.update_after_path(selected, now)
+    return rows, selected, line
 
 
 def main():
@@ -842,18 +1049,15 @@ def main():
         now = ticks_ms()
 
         if telemetry is None or not link.started():
+            rows, _, line = run_vision_pipeline(img, extractor, graph, scorer, zone, now)
             link.send_command(MODE_IDLE, 0, 0, 0, zone.route_step, 0, 0)
-            empty_line = {"confidence": 0, "path": None}
-            debug.show(img, [], empty_line, zone, MODE_IDLE, telemetry)
+            debug.show(img, rows, line, zone, MODE_IDLE, telemetry)
             time.sleep_ms(5)
             continue
 
         zone.update_from_telemetry(telemetry)
-        rows = extractor.extract(img)
-        paths = graph.build(rows)
-        selected = scorer.select(paths, zone, now)
-        line = command_planner.make_line(selected, paths)
-        zone.update_after_path(selected, now)
+        rows, selected, line = run_vision_pipeline(img, extractor, graph, scorer, zone, now,
+                                                   command_planner.last_valid_bias)
 
         gate_event = gate.update(telemetry, now)
         if gate_event in (1, 2):
