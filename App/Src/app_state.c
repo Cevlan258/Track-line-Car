@@ -14,6 +14,7 @@ static AppStateId app_state = APP_STATE_IDLE;
 static uint32_t last_display_ms;
 static uint8_t pending_checkpoint;
 static uint8_t checkpoint_sent_mask;
+static uint8_t latest_battery_percent;
 
 static uint32_t now_ms(void)
 {
@@ -70,7 +71,7 @@ static void update_status_display(void)
 
   if ((now - last_display_ms) >= APP_DISPLAY_PERIOD_MS)
   {
-    Display_ShowStatus(state_name(app_state), AppStart_ElapsedMs());
+    Display_ShowStatus(state_name(app_state), AppStart_ElapsedMs(), latest_battery_percent);
     last_display_ms = now;
   }
 }
@@ -82,6 +83,7 @@ static void update_telemetry(uint8_t fault)
 
   R_Bat_Vol = AX_VIN_GetVol_X100();
   battery_percent = AX_VIN_GetPercent(R_Bat_Vol);
+  latest_battery_percent = battery_percent;
   MaixLink_TaskPoll(&sample,
                     AX_ROBOT_GetDistanceMm(),
                     R_Bat_Vol,
@@ -196,10 +198,12 @@ static void update_run_state(void)
 void AppState_Init(void)
 {
   Display_Init();
+  R_Bat_Vol = AX_VIN_GetVol_X100();
+  latest_battery_percent = AX_VIN_GetPercent(R_Bat_Vol);
   AppTime_Init();
   if (AppTime_IsValid() == 0U)
   {
-    Display_ShowStatus("RTC ERR", 0);
+    Display_ShowStatus("RTC ERR", 0, latest_battery_percent);
     osDelay(500);
   }
   LoRa_Init();
