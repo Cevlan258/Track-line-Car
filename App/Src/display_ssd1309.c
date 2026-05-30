@@ -234,13 +234,15 @@ void Display_Init(void)
   fb_flush();
 }
 
-void Display_ShowStatus(const char *state, uint32_t elapsed_ms)
+void Display_ShowStatus(const char *state, uint32_t elapsed_ms, uint8_t battery_percent)
 {
   char line[18];
   const uint32_t elapsed_s = elapsed_ms / 1000U;
 
   fb_clear();
   fb_text(0, 0, "TRACK CAR");
+  (void)snprintf(line, sizeof(line), "%3u%%", battery_percent);
+  fb_text(108, 0, line);
   fb_text(0, 10, state);
   (void)snprintf(line, sizeof(line), "T%02lu:%02lu", elapsed_s / 60U, elapsed_s % 60U);
   fb_text(0, 20, line);

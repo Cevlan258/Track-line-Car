@@ -10,7 +10,8 @@
 
 - 黑线巡线：沿 3 cm 黑线行驶，经过直角弯、U 形段、S 弯、矩形/圆形复杂区和终点。
 - 无线通信：在 2.1、2.2 标记点通过 LoRa 发送队号、队名、时间和耗时。
-- 障碍检测：使用 24 GHz 雷达检测门架/障碍，选择绕行方向。
+- 拱门通信：使用 MaixCAM 几何视觉识别 2.1/2.2 拱门，通过 LoRa 发送队号、队名、时间和耗时。
+- 障碍检测：使用 24 GHz 雷达检测任务 3 障碍箱金属板位置，选择空侧绕行。
 
 当前正式比赛策略已确认走左版地图。这里的“左版”不是贴黑线左边缘行驶，而是固定左侧赛道拓扑；小车仍跟踪黑线中心，但在多候选、分叉、镜像区和圆/矩形复杂区优先选择符合左版地图的路径。
 
@@ -29,11 +30,11 @@
 
 ### MaixCAM 侧
 
-- `maixcam/main.py`：当前主要巡线、路线推进、终点判断、雷达门架/障碍处理和运动命令生成逻辑。
+- `maixcam/main.py`：当前主要巡线、路线推进、视觉拱门识别、雷达障碍处理、终点判断和运动命令生成逻辑。
 - `docs/maixcam_protocol.md`：MaixCAM 与 STM32 的串口协议说明。
 - `tests/maixcam_standalone_test.py`：MaixCAM 策略的 host 侧静态/行为测试。
 
-MaixCAM -> STM32 命令帧包含 `MODE`、`FLAGS`、`ROUTE_STEP`、`CHECKPOINT_REQUEST`、`CONFIDENCE`、`VX_MM_S`、`YAW`。STM32 -> MaixCAM 遥测帧包含启动状态、LoRa 状态、电池、编码器里程和雷达目标。
+MaixCAM -> STM32 命令帧包含 `MODE`、`FLAGS`、`ROUTE_STEP`、`CHECKPOINT_REQUEST`、`CONFIDENCE`、`VX_MM_S`、`YAW`。STM32 -> MaixCAM 遥测帧包含启动状态、LoRa 状态、电池、编码器里程和雷达目标。拱门事件由 MaixCAM 图像识别产生，雷达目标只用于任务 3 障碍判断。
 
 ## 巡线策略摘要
 
@@ -44,8 +45,10 @@ MaixCAM -> STM32 命令帧包含 `MODE`、`FLAGS`、`ROUTE_STEP`、`CHECKPOINT_R
 3. 要求黑线旁边存在白底，减少阴影或黑色障碍误检。
 4. 把扫描带线段连成候选路径。
 5. 计算路径特征：偏移、预瞄偏移、曲率、分支数、死路、闭环分数。
-6. 按当前区域和左版地图固定手性给候选路径打分。
+6. 按当前区域和左版地图分段偏好给候选路径打分。
 7. 生成速度和转向命令发给 STM32。
+8. 在 2.1/2.2 的里程辅助窗口内用几何门框识别触发 LoRa 请求。
+9. 在任务 3 障碍区域内用雷达目标判断金属板侧别，选择空侧绕行。
 
 当前区域按编码器里程粗分：
 
@@ -123,9 +126,9 @@ tests\maix_link_protocol_test.c
 
 当前未提交改动包括：
 
-- `maixcam/main.py`：动态阈值、白底侧向过滤、固定左版地图评分、保守限速和丢线左搜。
-- `tests/maixcam_standalone_test.py`：MaixCAM 策略 host 侧测试。
-- `docs/maixcam_protocol.md`：补充正式比赛固定左版地图说明。
+- `maixcam/main.py`：动态阈值、白底侧向过滤、左版地图评分、视觉拱门识别、雷达障碍避让、保守限速和丢线左搜。
+- `tests/maixcam_standalone_test.py`：MaixCAM 策略 host 侧测试，覆盖视觉拱门和雷达障碍解耦。
+- `docs/maixcam_protocol.md`：补充正式比赛固定左版地图、视觉拱门和雷达障碍职责说明。
 
 最近验证结果：
 
@@ -148,4 +151,5 @@ git branch --show-current
 - 中文文件请用 UTF-8 读取/编辑，PowerShell 中建议使用 `Get-Content -Encoding UTF8`。
 - MaixCAM 当前连接使用 `UART1`，STM32 侧是 `USART3`：MaixCAM `A19/TX` -> STM32 `PB11/RX`，MaixCAM `A18/RX` <- STM32 `PB10/TX`。
 - STM32 安全职责不应被削弱：MaixCAM 可下发速度/转向，但 STM32 仍要保持超时停车、速度限幅、转向限幅和终点停车。
+- 雷达不再作为 2.1/2.2 拱门识别依据；如果 LoRa 触发异常，优先调 `VisionGateDetector` 的 ROI、几何尺寸和里程辅助窗口。
 - 修改巡线策略时优先补充 `tests/maixcam_standalone_test.py`，再改 `maixcam/main.py`。
