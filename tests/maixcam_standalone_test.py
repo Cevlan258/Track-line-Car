@@ -90,6 +90,72 @@ def _path(module, near_x, lookahead_x, far_x, rows=6, offset=0,
     }
 
 
+class FakeBlob:
+    def __init__(self, x, y, w, h, pixels=None):
+        self._x = x
+        self._y = y
+        self._w = w
+        self._h = h
+        self._pixels = pixels if pixels is not None else w * h
+
+    def x(self):
+        return self._x
+
+    def y(self):
+        return self._y
+
+    def w(self):
+        return self._w
+
+    def h(self):
+        return self._h
+
+    def pixels(self):
+        return self._pixels
+
+
+class FakeBlobImage:
+    def __init__(self, blobs):
+        self.blobs = blobs
+
+    def find_blobs(self, *args, **kwargs):
+        return list(self.blobs)
+
+
+class FakeDrawImage:
+    def __init__(self):
+        self.calls = []
+
+    def draw_line(self, *args):
+        self.calls.append(("line", args))
+
+    def draw_rect(self, *args):
+        self.calls.append(("rect", args))
+
+    def draw_string(self, *args):
+        self.calls.append(("string", args))
+
+
+def _telemetry(module, distance_mm=0, targets=None, lora_status=None):
+    return {
+        "distance_mm": distance_mm,
+        "lora_status": module.LORA_IDLE if lora_status is None else lora_status,
+        "targets": targets or [],
+    }
+
+
+def _target(x_mm, y_mm, valid=1, distance_mm=None):
+    if distance_mm is None:
+        distance_mm = int((x_mm * x_mm + y_mm * y_mm) ** 0.5)
+    return {
+        "valid": valid,
+        "x_mm": x_mm,
+        "y_mm": y_mm,
+        "speed_cm_s": 0,
+        "distance_mm": distance_mm,
+    }
+
+
 class MaixcamStandaloneTest(unittest.TestCase):
     def test_idle_without_stm32_runs_standalone_vision_debug(self):
         source = MAIN_PY.read_text(encoding="utf-8")
@@ -206,6 +272,106 @@ class MaixcamStandaloneTest(unittest.TestCase):
         }
 
         self.assertLessEqual(zone.speed_limit(line), module.LINE_COMPLEX_SPEED)
+
+    def test_vision_gate_detector_counts_two_arches_from_geometry_only(self):
+        module = _load_main_module()
+        detector = module.VisionGateDetector()
+        img = FakeBlobImage([
+            FakeBlob(82, 52, 14, 78),
+            FakeBlob(218, 54, 14, 76),
+            FakeBlob(82, 48, 150, 12),
+        ])
+        telemetry = _telemetry(module, distance_mm=5200)
+
+        events = []
+        for now in (0, 80, 160):
+            events.append(detector.update(img, telemetry, now))
+        events.append(detector.update(FakeBlobImage([]), telemetry, 260))
+        events.append(detector.update(FakeBlobImage([]), telemetry, 430))
+
+        telemetry["distance_mm"] = 6200
+        events.append(detector.update(img, telemetry, 1800))
+        events.append(detector.update(img, telemetry, 1960))
+        events.append(detector.update(FakeBlobImage([]), telemetry, 2130))
+        events.append(detector.update(FakeBlobImage([]), telemetry, 2300))
+        telemetry["distance_mm"] = 7200
+        events.append(detector.update(img, telemetry, 3600))
+        events.append(detector.update(FakeBlobImage([]), telemetry, 3800))
+
+        self.assertEqual([1, 2], [event for event in events if event])
+
+    def test_vision_gate_detector_rejects_plain_track_or_single_post(self):
+        module = _load_main_module()
+        detector = module.VisionGateDetector()
+        telemetry = _telemetry(module, distance_mm=5200)
+
+        line_like = FakeBlobImage([FakeBlob(95, 110, 130, 10)])
+        single_post = FakeBlobImage([FakeBlob(150, 45, 14, 88)])
+
+        self.assertEqual(0, detector.update(line_like, telemetry, 0))
+        self.assertEqual("clear", detector.state)
+        self.assertEqual(0, detector.update(single_post, telemetry, 160))
+        self.assertEqual("clear", detector.state)
+
+    def test_radar_obstacle_planner_uses_free_side_without_checkpoint(self):
+        module = _load_main_module()
+        planner = module.RadarObstaclePlanner()
+        zone = module.ZonePlanner()
+        zone.zone = module.ZONE_CIRCLE_RECT
+        telemetry = _telemetry(module, distance_mm=8500, targets=[
+            _target(-360, 760),
+            _target(-420, 900),
+            _target(-390, 1040),
+        ])
+
+        for now in (0, 50, 100):
+            planner.update(telemetry, zone, now)
+
+        self.assertTrue(planner.active)
+        self.assertEqual(module.OBSTACLE_SIDE_LEFT, planner.obstacle_side)
+        self.assertEqual(module.AVOID_SIDE_RIGHT, planner.avoid_side)
+        vx, yaw = planner.command(160)
+        self.assertEqual(module.AVOID_SPEED, vx)
+        self.assertGreater(yaw, 0)
+
+    def test_radar_scope_draws_fan_and_targets_during_avoid(self):
+        module = _load_main_module()
+        planner = module.RadarObstaclePlanner()
+        zone = module.ZonePlanner()
+        zone.zone = module.ZONE_CIRCLE_RECT
+        telemetry = _telemetry(module, distance_mm=8500, targets=[
+            _target(-360, 760),
+            _target(-420, 900),
+            _target(-390, 1040),
+        ])
+
+        for now in (0, 50, 100):
+            planner.update(telemetry, zone, now)
+
+        img = FakeDrawImage()
+        view = module.SimpleDebugView.__new__(module.SimpleDebugView)
+        view._draw_radar_scope(img, planner, telemetry, "CIRCLE")
+
+        line_calls = [call for call in img.calls if call[0] == "line"]
+        rect_calls = [call for call in img.calls if call[0] == "rect"]
+        text_calls = [call for call in img.calls if call[0] == "string"]
+
+        self.assertEqual("avoid", planner.state)
+        self.assertEqual(3, len(planner.radar_targets))
+        self.assertGreater(len(line_calls), 80)
+        self.assertGreaterEqual(len(rect_calls), 3)
+        self.assertTrue(any("AVOID" in call[1][2] for call in text_calls))
+
+    def test_radar_targets_do_not_trigger_lora_gate_events(self):
+        module = _load_main_module()
+        detector = module.VisionGateDetector()
+        telemetry = _telemetry(module, distance_mm=5200, targets=[
+            _target(-300, 700),
+            _target(320, 720),
+        ])
+
+        for now in (0, 160, 320, 500):
+            self.assertEqual(0, detector.update(FakeBlobImage([]), telemetry, now))
 
 
 if __name__ == "__main__":

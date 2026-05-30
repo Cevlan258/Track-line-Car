@@ -49,7 +49,6 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     App/Src/app_time.c
     App/Src/app_uart.c
     App/Src/display_ssd1309.c
-    App/Src/gate_detector.c
     App/Src/lora.c
     App/Src/maix_link.c
     App/Src/maix_link_protocol.c

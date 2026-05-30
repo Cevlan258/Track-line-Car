@@ -1,3 +1,5 @@
+import math
+
 from maix import app, camera, display, image, pinmap, time, uart
 
 
@@ -105,12 +107,45 @@ GATE_POST_MIN_ABS_X_MM = 120
 GATE_PAIR_Y_TOL_MM = 250
 GATE_WIDTH_MIN_MM = 300
 GATE_WIDTH_MAX_MM = 1600
+GATE_VISION_ROI = [35, 30, 250, 135]
+GATE_POST_MIN_H = 38
+GATE_POST_MAX_W = 34
+GATE_POST_MIN_ASPECT = 1.8
+GATE_TOP_MIN_W = 70
+GATE_TOP_MAX_H = 28
+GATE_TOP_MIN_ASPECT = 2.6
+GATE_PAIR_MIN_GAP = 70
+GATE_PAIR_MAX_GAP = 190
+GATE_TOP_TOL = 34
+GATE_WINDOW_CONFIDENCE = 70
+GATE_STRICT_CONFIDENCE = 88
+GATE_DISTANCE_WINDOWS_MM = (
+    (4700, 6100),
+    (6000, 7600),
+)
 
 AVOID_SPEED = 260
 AVOID_YAW = 1100
 AVOID_ENTRY_MS = 700
 AVOID_PASS_MS = 900
 AVOID_RECOVER_MS = 650
+RADAR_SCAN_SPEED = 120
+RADAR_SCAN_YAW = 650
+RADAR_SCAN_STABLE_FRAMES = 3
+RADAR_SCAN_TIMEOUT_MS = 900
+RADAR_BOX_Y_MIN_MM = 300
+RADAR_BOX_Y_MAX_MM = 1800
+RADAR_BOX_X_MIN_MM = 120
+RADAR_SCORE_MARGIN = 2
+RADAR_HISTORY_LEN = 24
+RADAR_SCOPE_FOV_DEG = 100
+RADAR_SCOPE_MAX_MM = 1800
+RADAR_SCOPE_RING_COUNT = 5
+OBSTACLE_SIDE_UNKNOWN = 0
+OBSTACLE_SIDE_LEFT = -1
+OBSTACLE_SIDE_RIGHT = 1
+AVOID_SIDE_LEFT = -1
+AVOID_SIDE_RIGHT = 1
 
 # 这些里程窗口来自赛道图尺寸，是现场调参入口，不作为唯一判据。
 ZONE_BOOT_END_MM = 450
@@ -138,6 +173,15 @@ TRACK_SIDE_BONUS = 34
 TRACK_SIDE_PENALTY = 28
 TRACK_FAR_BONUS = 22
 TRACK_FAR_PENALTY = 18
+ZONE_ROUTE_PREFERENCES = (
+    TRACK_SIGN_LEFT,
+    TRACK_SIGN_LEFT,
+    TRACK_SIGN_LEFT,
+    0,
+    TRACK_SIGN_LEFT,
+    TRACK_SIGN_LEFT,
+    0,
+)
 
 
 def ticks_ms():
@@ -306,6 +350,11 @@ def rgb(r, g, b):
 COLOR_RED = rgb(255, 0, 0)
 COLOR_GREEN = rgb(0, 255, 0)
 COLOR_BLUE = rgb(0, 0, 255)
+COLOR_RADAR_BG = rgb(28, 38, 48)
+COLOR_RADAR_FILL = rgb(72, 126, 158)
+COLOR_RADAR_GRID = rgb(92, 174, 220)
+COLOR_RADAR_TEXT = rgb(170, 226, 255)
+COLOR_RADAR_TARGET = rgb(255, 90, 70)
 
 
 class CameraAcq:
@@ -669,6 +718,11 @@ class ZonePlanner:
     def tangent_locked(self, now):
         return now < self.tangent_lock_until
 
+    def route_preference_sign(self):
+        if self.zone < len(ZONE_ROUTE_PREFERENCES):
+            return ZONE_ROUTE_PREFERENCES[self.zone]
+        return 0
+
     def speed_limit(self, line):
         if self.zone in (ZONE_BOOT_LOCAL, ZONE_DEAD_END_FILTER, ZONE_MIRROR_DISCOVERY):
             base = LINE_BOOT_SPEED
@@ -757,15 +811,16 @@ class PathScorer:
         return score
 
     def _fixed_map_score(self, path, zone_planner):
-        if zone_planner.map_sign == 0:
+        expected_sign = zone_planner.route_preference_sign()
+        if expected_sign == 0:
             return 0
         if zone_planner.zone not in (ZONE_DEAD_END_FILTER, ZONE_MIRROR_DISCOVERY,
                                      ZONE_RECT_ZONE, ZONE_CIRCLE_RECT):
             return 0
 
-        score = side_score(path["lookahead_x"], zone_planner.map_sign,
+        score = side_score(path["lookahead_x"], expected_sign,
                            TRACK_SIDE_BONUS, TRACK_SIDE_PENALTY)
-        score += side_score(path["far_x"], zone_planner.map_sign,
+        score += side_score(path["far_x"], expected_sign,
                             TRACK_FAR_BONUS, TRACK_FAR_PENALTY)
         return score
 
@@ -788,7 +843,9 @@ class CommandPlanner:
             if self.search_frames < SEARCH_FRAMES:
                 self.search_frames += 1
                 if self.last_valid_bias == 0:
-                    search_sign = TRACK_FIXED_MAP_SIGN if TRACK_FIXED_MAP_SIGN != 0 else 1
+                    search_sign = zone_planner.route_preference_sign()
+                    if search_sign == 0:
+                        search_sign = TRACK_FIXED_MAP_SIGN if TRACK_FIXED_MAP_SIGN != 0 else 1
                 else:
                     search_sign = sign(self.last_valid_bias)
                 yaw = SEARCH_YAW * search_sign
@@ -851,46 +908,108 @@ def draw_scan_bands(img, rows):
             pass
 
 
-class GateDetector:
+class VisionGateDetector:
     def __init__(self):
         self.state = "clear"
         self.state_since = 0
         self.lock_since = 0
         self.lock_distance = 0
-        self.last_distance_cm = 0
         self.count = 0
+        self.last_detection = None
 
-    def _pair_distance_cm(self, telemetry):
+    def _find_gate_blobs(self, img):
+        try:
+            return img.find_blobs([BLACK_LINE_LAB], roi=GATE_VISION_ROI,
+                                  pixels_threshold=28, area_threshold=28,
+                                  merge=True, margin=3)
+        except Exception:
+            try:
+                return img.find_blobs(thresholds=[BLACK_LINE_LAB], roi=GATE_VISION_ROI,
+                                      pixels_threshold=28, area_threshold=28,
+                                      merge=True, margin=3)
+            except Exception:
+                return []
+
+    def _classify_blobs(self, img):
+        posts = []
+        tops = []
+        for blob in self._find_gate_blobs(img):
+            x = int(blob_x(blob))
+            y = int(blob_y(blob))
+            w = int(blob_w(blob))
+            h = int(blob_h(blob))
+            pixels = int(blob_pixels(blob))
+            if w <= 0 or h <= 0:
+                continue
+            aspect_h = h / float(w)
+            aspect_w = w / float(h)
+            item = {"x": x, "y": y, "w": w, "h": h, "cx": x + w // 2,
+                    "cy": y + h // 2, "pixels": pixels}
+            if h >= GATE_POST_MIN_H and w <= GATE_POST_MAX_W and aspect_h >= GATE_POST_MIN_ASPECT:
+                posts.append(item)
+            if w >= GATE_TOP_MIN_W and h <= GATE_TOP_MAX_H and aspect_w >= GATE_TOP_MIN_ASPECT:
+                tops.append(item)
+        return posts, tops
+
+    def detect(self, img, telemetry=None):
+        posts, tops = self._classify_blobs(img)
+        best = None
+        best_score = 0
+        for left in posts:
+            for right in posts:
+                if right["cx"] <= left["cx"]:
+                    continue
+                gap = right["cx"] - left["cx"]
+                if gap < GATE_PAIR_MIN_GAP or gap > GATE_PAIR_MAX_GAP:
+                    continue
+                top_delta = abs(left["y"] - right["y"])
+                if top_delta > GATE_TOP_TOL:
+                    continue
+                pair_score = 48
+                pair_score += max(0, 22 - top_delta)
+                pair_score += min(22, (left["h"] + right["h"]) // 8)
+                for top in tops:
+                    spans_pair = top["x"] <= left["cx"] and (top["x"] + top["w"]) >= right["cx"]
+                    close_top = abs(top["cy"] - min(left["y"], right["y"])) <= GATE_TOP_TOL
+                    if spans_pair and close_top:
+                        score = pair_score + 35 + min(18, top["w"] // 10)
+                        rect = [left["x"], min(top["y"], left["y"], right["y"]),
+                                right["x"] + right["w"] - left["x"],
+                                max(left["y"] + left["h"], right["y"] + right["h"]) -
+                                min(top["y"], left["y"], right["y"])]
+                        if score > best_score:
+                            best_score = score
+                            best = {"confidence": int(clamp(score, 0, 100)),
+                                    "rect": rect, "left": left, "right": right, "top": top}
+        if best is None:
+            self.last_detection = {"active": False, "confidence": 0, "rect": None}
+        else:
+            required = self._required_confidence(telemetry)
+            best["active"] = best["confidence"] >= required
+            self.last_detection = best
+        return self.last_detection
+
+    def _required_confidence(self, telemetry):
         if telemetry is None:
-            return None
-        targets = telemetry["targets"]
-        for left in targets:
-            if not left["valid"] or left["x_mm"] >= 0:
-                continue
-            if abs(left["x_mm"]) < GATE_POST_MIN_ABS_X_MM:
-                continue
-            if left["y_mm"] < GATE_MIN_CM * 10 or left["y_mm"] > GATE_MAX_CM * 10:
-                continue
-            for right in targets:
-                width = right["x_mm"] - left["x_mm"]
-                if not right["valid"] or right["x_mm"] <= 0:
-                    continue
-                if abs(right["x_mm"]) < GATE_POST_MIN_ABS_X_MM:
-                    continue
-                if right["y_mm"] < GATE_MIN_CM * 10 or right["y_mm"] > GATE_MAX_CM * 10:
-                    continue
-                if abs(left["y_mm"] - right["y_mm"]) > GATE_PAIR_Y_TOL_MM:
-                    continue
-                if width < GATE_WIDTH_MIN_MM or width > GATE_WIDTH_MAX_MM:
-                    continue
-                return (left["y_mm"] + right["y_mm"]) // 20
-        return None
+            return GATE_STRICT_CONFIDENCE
+        distance = telemetry.get("distance_mm", 0)
+        index = int(clamp(self.count, 0, len(GATE_DISTANCE_WINDOWS_MM) - 1))
+        start, end = GATE_DISTANCE_WINDOWS_MM[index]
+        if start <= distance <= end:
+            return GATE_WINDOW_CONFIDENCE
+        return GATE_STRICT_CONFIDENCE
 
-    def update(self, telemetry, now):
-        distance_cm = self._pair_distance_cm(telemetry)
-        active = distance_cm is not None
+    def update(self, img, telemetry, now):
+        detection = self.detect(img, telemetry)
+        active = detection.get("active", False)
         event = 0
         distance_mm = telemetry["distance_mm"] if telemetry else 0
+
+        if self.state == "locked":
+            can_unlock = ((now - self.lock_since >= GATE_LOCK_MS) and
+                          (distance_mm - self.lock_distance >= GATE_LOCK_DISTANCE_MM))
+            if can_unlock:
+                self.state = "clear"
 
         if self.state == "clear":
             if active:
@@ -902,61 +1021,139 @@ class GateDetector:
             elif now - self.state_since >= GATE_ENTER_STABLE_MS:
                 self.state = "under"
         elif self.state == "under":
-            exiting = not active
-            if active and distance_cm > self.last_distance_cm:
-                exiting = (distance_cm - self.last_distance_cm) >= GATE_EXIT_JUMP_CM
-            if exiting:
+            if not active:
                 self.state = "exiting"
                 self.state_since = now
         elif self.state == "exiting":
             if active:
                 self.state = "under"
             elif now - self.state_since >= GATE_EXIT_STABLE_MS:
-                self.count += 1
-                event = self.count
+                if self.count < 2:
+                    self.count += 1
+                    event = self.count
                 self.state = "locked"
                 self.lock_since = now
                 self.lock_distance = distance_mm
-        elif self.state == "locked":
-            if now - self.lock_since >= GATE_LOCK_MS and distance_mm - self.lock_distance >= GATE_LOCK_DISTANCE_MM:
-                self.state = "clear"
-
-        if active:
-            self.last_distance_cm = distance_cm
         return event
 
 
-class ObstaclePlanner:
+class RadarObstaclePlanner:
     def __init__(self):
         self.active = False
-        self.side = 1
+        self.state = "idle"
+        self.obstacle_side = OBSTACLE_SIDE_UNKNOWN
+        self.avoid_side = AVOID_SIDE_LEFT
         self.phase = 0
         self.phase_start = 0
+        self.scan_start = 0
+        self.stable_frames = 0
+        self.left_score = 0
+        self.right_score = 0
+        self.history = []
+        self.radar_targets = []
 
-    def start(self, telemetry, now):
+    def _score_targets(self, telemetry):
         left_score = 0
         right_score = 0
         if telemetry:
             for target in telemetry["targets"]:
                 if not target["valid"]:
                     continue
-                if target["y_mm"] < 300 or target["y_mm"] > 1800:
+                if target["y_mm"] < RADAR_BOX_Y_MIN_MM or target["y_mm"] > RADAR_BOX_Y_MAX_MM:
                     continue
-                if target["x_mm"] < -120:
-                    left_score += 1
-                elif target["x_mm"] > 120:
-                    right_score += 1
-        # 雷达只做辅助，默认向目标较少的一侧轻微绕行。
-        self.side = 1 if left_score > right_score else -1
+                weight = 1
+                if target.get("distance_mm", 0) and target["distance_mm"] < 1000:
+                    weight += 1
+                if target["x_mm"] < -RADAR_BOX_X_MIN_MM:
+                    left_score += weight
+                elif target["x_mm"] > RADAR_BOX_X_MIN_MM:
+                    right_score += weight
+        return left_score, right_score
+
+    def _choose_side(self, left_score, right_score):
+        if left_score >= right_score + RADAR_SCORE_MARGIN:
+            return OBSTACLE_SIDE_LEFT
+        if right_score >= left_score + RADAR_SCORE_MARGIN:
+            return OBSTACLE_SIDE_RIGHT
+        return OBSTACLE_SIDE_UNKNOWN
+
+    def _record_signature(self, left_score, right_score):
+        # OLED/屏幕只显示强度历史，避免把雷达裸坐标当成最终展示。
+        self.history.append((int(clamp(left_score, 0, 8)), int(clamp(right_score, 0, 8))))
+        if len(self.history) > RADAR_HISTORY_LEN:
+            self.history = self.history[-RADAR_HISTORY_LEN:]
+
+    def _record_targets(self, telemetry):
+        # 避障雷达图只保留最近一帧有效目标，退出障碍区后自动清空。
+        targets = []
+        if telemetry:
+            for target in telemetry["targets"]:
+                if not target["valid"]:
+                    continue
+                if target["y_mm"] <= 0 or target["y_mm"] > RADAR_SCOPE_MAX_MM:
+                    continue
+                targets.append({
+                    "x_mm": target["x_mm"],
+                    "y_mm": target["y_mm"],
+                    "distance_mm": target.get("distance_mm", 0),
+                })
+        self.radar_targets = targets
+
+    def _start_avoid(self, obstacle_side, now):
+        self.obstacle_side = obstacle_side
+        if obstacle_side == OBSTACLE_SIDE_LEFT:
+            self.avoid_side = AVOID_SIDE_RIGHT
+        else:
+            self.avoid_side = AVOID_SIDE_LEFT
         self.active = True
+        self.state = "avoid"
         self.phase = 0
         self.phase_start = now
 
+    def update(self, telemetry, zone_planner, now):
+        if zone_planner.zone != ZONE_CIRCLE_RECT:
+            if self.state != "avoid":
+                self.state = "idle"
+                self.stable_frames = 0
+                self.radar_targets = []
+            return
+
+        self._record_targets(telemetry)
+
+        if self.state == "idle":
+            self.state = "scanning"
+            self.scan_start = now
+            self.stable_frames = 0
+
+        if self.state != "scanning":
+            return
+
+        self.left_score, self.right_score = self._score_targets(telemetry)
+        self._record_signature(self.left_score, self.right_score)
+        side = self._choose_side(self.left_score, self.right_score)
+        if side == OBSTACLE_SIDE_UNKNOWN:
+            self.stable_frames = 0
+            if now - self.scan_start >= RADAR_SCAN_TIMEOUT_MS:
+                self._start_avoid(OBSTACLE_SIDE_RIGHT, now)
+            return
+
+        if side == self.obstacle_side:
+            self.stable_frames += 1
+        else:
+            self.obstacle_side = side
+            self.stable_frames = 1
+
+        if self.stable_frames >= RADAR_SCAN_STABLE_FRAMES:
+            self._start_avoid(side, now)
+
     def command(self, now):
+        if self.state == "scanning":
+            yaw = RADAR_SCAN_YAW if self.obstacle_side != OBSTACLE_SIDE_RIGHT else -RADAR_SCAN_YAW
+            return RADAR_SCAN_SPEED, yaw
         if not self.active:
             return None
         elapsed = now - self.phase_start
-        turn = AVOID_YAW * self.side
+        turn = AVOID_YAW * self.avoid_side
         if self.phase == 0:
             if elapsed >= AVOID_ENTRY_MS:
                 self.phase = 1
@@ -969,6 +1166,7 @@ class ObstaclePlanner:
             return AVOID_SPEED, 0
         if elapsed >= AVOID_RECOVER_MS:
             self.active = False
+            self.state = "done"
             return None
         return AVOID_SPEED, -turn // 2
 
@@ -977,9 +1175,14 @@ class SimpleDebugView:
     def __init__(self):
         self.disp = display.Display()
 
-    def show(self, img, rows, line, zone_planner, mode, telemetry):
+    def show(self, img, rows, line, zone_planner, mode, telemetry, gate=None, obstacle=None):
         try:
             zone = ZONE_NAMES[zone_planner.zone]
+            if obstacle and obstacle.state == "avoid":
+                self._draw_radar_scope(img, obstacle, telemetry, zone)
+                self.disp.show(img)
+                return
+
             path_count = len(line.get("paths", []))
             segment_count = line.get("segments", 0)
             black_l = line.get("black_l_max", BLACK_LINE_LAB[1])
@@ -993,6 +1196,23 @@ class SimpleDebugView:
                 img.draw_string(2, 18, "D{} B{}%".format(telemetry["distance_mm"],
                                                           telemetry["battery_percent"]),
                                 COLOR_BLUE)
+            overlay_y = 34
+            if gate:
+                detection = gate.last_detection or {}
+                img.draw_string(2, overlay_y, "G{} N{} C{}".format(gate.state, gate.count,
+                                                                   detection.get("confidence", 0)),
+                                COLOR_BLUE)
+                rect = detection.get("rect")
+                if rect:
+                    img.draw_rect(rect[0], rect[1], rect[2], rect[3], COLOR_GREEN)
+                overlay_y += 16
+            if obstacle:
+                img.draw_string(2, overlay_y, "R{} L{} R{} A{}".format(obstacle.state,
+                                                                       obstacle.left_score,
+                                                                       obstacle.right_score,
+                                                                       obstacle.avoid_side),
+                                COLOR_RED)
+                self._draw_radar_signature(img, obstacle)
             draw_scan_bands(img, rows)
             for row in rows:
                 for seg in row["segments"]:
@@ -1011,8 +1231,96 @@ class SimpleDebugView:
                     except Exception:
                         pass
             if zone_planner.tangent_locked(ticks_ms()):
-                img.draw_string(2, 34, "TANGENT", COLOR_RED)
+                img.draw_string(2, 66, "TANGENT", COLOR_RED)
             self.disp.show(img)
+        except Exception:
+            pass
+
+    def _draw_radar_scope(self, img, obstacle, telemetry, zone):
+        apex_x = CENTER_X
+        apex_y = 2
+        radius = min(IMG_H - 10, 203)
+        half_fov = RADAR_SCOPE_FOV_DEG // 2
+        ring_step = radius // RADAR_SCOPE_RING_COUNT
+
+        # 用水平线清屏，避免摄像头画面干扰雷达扇形。
+        for y in range(0, IMG_H, 2):
+            img.draw_line(0, y, IMG_W - 1, y, COLOR_RADAR_BG)
+            img.draw_line(0, y + 1, IMG_W - 1, y + 1, COLOR_RADAR_BG)
+
+        for angle in range(-half_fov, half_fov + 1, 2):
+            end_x, end_y = self._radar_polar_to_xy(apex_x, apex_y, radius, angle)
+            img.draw_line(apex_x, apex_y, end_x, end_y, COLOR_RADAR_FILL)
+
+        for ring in range(1, RADAR_SCOPE_RING_COUNT + 1):
+            r = ring * ring_step
+            prev = None
+            for angle in range(-half_fov, half_fov + 1, 4):
+                point = self._radar_polar_to_xy(apex_x, apex_y, r, angle)
+                if prev:
+                    img.draw_line(prev[0], prev[1], point[0], point[1], COLOR_RADAR_GRID)
+                prev = point
+
+        for angle in range(-half_fov, half_fov + 1, 10):
+            end_x, end_y = self._radar_polar_to_xy(apex_x, apex_y, radius, angle)
+            img.draw_line(apex_x, apex_y, end_x, end_y, COLOR_RADAR_GRID)
+
+        img.draw_string(4, 4, "AVOID {}".format(zone), COLOR_RADAR_TEXT)
+        img.draw_string(4, 20, "OBJ:{} GO:{}".format(self._side_text(obstacle.obstacle_side),
+                                                     self._side_text(obstacle.avoid_side)),
+                        COLOR_RADAR_TARGET)
+        if telemetry:
+            img.draw_string(4, 36, "D{} T{}".format(telemetry["distance_mm"],
+                                                    len(obstacle.radar_targets)),
+                            COLOR_RADAR_TEXT)
+
+        for target in obstacle.radar_targets:
+            point = self._radar_target_to_xy(target, apex_x, apex_y, radius, half_fov)
+            if point is None:
+                continue
+            x, y = point
+            img.draw_rect(x - 2, y - 2, 5, 5, COLOR_RADAR_TARGET)
+            img.draw_line(x - 4, y, x + 4, y, COLOR_RADAR_TARGET)
+            img.draw_line(x, y - 4, x, y + 4, COLOR_RADAR_TARGET)
+
+    def _radar_polar_to_xy(self, apex_x, apex_y, radius, angle_deg):
+        rad = angle_deg * math.pi / 180.0
+        x = int(apex_x + math.sin(rad) * radius)
+        y = int(apex_y + math.cos(rad) * radius)
+        return int(clamp(x, 0, IMG_W - 1)), int(clamp(y, 0, IMG_H - 1))
+
+    def _radar_target_to_xy(self, target, apex_x, apex_y, radius, half_fov):
+        x_mm = target["x_mm"]
+        y_mm = target["y_mm"]
+        angle = math.atan2(x_mm, y_mm) * 180.0 / math.pi
+        if angle < -half_fov or angle > half_fov:
+            return None
+        distance = target.get("distance_mm", 0)
+        if distance <= 0:
+            distance = math.sqrt(x_mm * x_mm + y_mm * y_mm)
+        r = int(clamp(distance, 0, RADAR_SCOPE_MAX_MM) * radius / RADAR_SCOPE_MAX_MM)
+        return self._radar_polar_to_xy(apex_x, apex_y, r, angle)
+
+    def _side_text(self, side):
+        if side == OBSTACLE_SIDE_LEFT or side == AVOID_SIDE_LEFT:
+            return "L"
+        if side == OBSTACLE_SIDE_RIGHT or side == AVOID_SIDE_RIGHT:
+            return "R"
+        return "?"
+
+    def _draw_radar_signature(self, img, obstacle):
+        if obstacle.state not in ("scanning", "avoid", "done"):
+            return
+        base_x = IMG_W - RADAR_HISTORY_LEN - 4
+        base_y = 54
+        try:
+            img.draw_string(base_x - 20, base_y - 12, "RAD", COLOR_RED)
+            for index, scores in enumerate(obstacle.history):
+                left_score, right_score = scores
+                level = int(clamp(left_score + right_score, 0, 8))
+                height = max(1, level * 3)
+                color = COLOR_RED if left_score >= right_score else COLOR_BLUE
+                img.draw_rect(base_x + index, base_y + (24 - height), 1, height, color)
         except Exception:
             pass
 
@@ -1037,8 +1345,8 @@ def main():
     zone = ZonePlanner()
     scorer = PathScorer()
     command_planner = CommandPlanner()
-    gate = GateDetector()
-    obstacle = ObstaclePlanner()
+    gate = VisionGateDetector()
+    obstacle = RadarObstaclePlanner()
     debug = SimpleDebugView()
     pending_checkpoint = 0
     checkpoint_status_armed = False
@@ -1051,7 +1359,7 @@ def main():
         if telemetry is None or not link.started():
             rows, _, line = run_vision_pipeline(img, extractor, graph, scorer, zone, now)
             link.send_command(MODE_IDLE, 0, 0, 0, zone.route_step, 0, 0)
-            debug.show(img, rows, line, zone, MODE_IDLE, telemetry)
+            debug.show(img, rows, line, zone, MODE_IDLE, telemetry, gate, obstacle)
             time.sleep_ms(5)
             continue
 
@@ -1059,12 +1367,10 @@ def main():
         rows, selected, line = run_vision_pipeline(img, extractor, graph, scorer, zone, now,
                                                    command_planner.last_valid_bias)
 
-        gate_event = gate.update(telemetry, now)
+        gate_event = gate.update(img, telemetry, now)
         if gate_event in (1, 2):
             pending_checkpoint = gate_event
             checkpoint_status_armed = False
-        elif gate_event == 3:
-            obstacle.start(telemetry, now)
 
         checkpoint = pending_checkpoint
         if pending_checkpoint != 0:
@@ -1078,10 +1384,11 @@ def main():
         if zone.zone == ZONE_FINISH_APPROACH and extractor.finish_detected(img):
             flags = CMD_FLAG_FINISH
             link.send_command(MODE_FINISH, 0, 0, flags, zone.route_step, 0, 100)
-            debug.show(img, rows, line, zone, MODE_FINISH, telemetry)
+            debug.show(img, rows, line, zone, MODE_FINISH, telemetry, gate, obstacle)
             time.sleep_ms(5)
             continue
 
+        obstacle.update(telemetry, zone, now)
         avoid_cmd = obstacle.command(now)
         if avoid_cmd and zone.zone == ZONE_CIRCLE_RECT:
             vx, yaw = avoid_cmd
@@ -1092,7 +1399,7 @@ def main():
             confidence = line["confidence"]
 
         link.send_command(MODE_RUN, vx, yaw, flags, zone.route_step, checkpoint, confidence)
-        debug.show(img, rows, line, zone, MODE_RUN, telemetry)
+        debug.show(img, rows, line, zone, MODE_RUN, telemetry, gate, obstacle)
         time.sleep_ms(5)
 
 
