@@ -68,10 +68,13 @@ static void stop_motion(void)
 static void update_status_display(void)
 {
   const uint32_t now = now_ms();
+  char current_time[9];
 
   if ((now - last_display_ms) >= APP_DISPLAY_PERIOD_MS)
   {
-    Display_ShowStatus(state_name(app_state), AppStart_ElapsedMs(), latest_battery_percent);
+    AppTime_GetBeijingTime(current_time, sizeof(current_time));
+    Display_ShowStatus(state_name(app_state), AppStart_ElapsedMs(), latest_battery_percent,
+                       current_time);
     last_display_ms = now;
   }
 }
@@ -203,7 +206,7 @@ void AppState_Init(void)
   AppTime_Init();
   if (AppTime_IsValid() == 0U)
   {
-    Display_ShowStatus("RTC ERR", 0, latest_battery_percent);
+    Display_ShowStatus("RTC ERR", 0, latest_battery_percent, "--:--:--");
     osDelay(500);
   }
   LoRa_Init();
