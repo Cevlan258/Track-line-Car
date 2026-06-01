@@ -234,7 +234,7 @@ void Display_Init(void)
   fb_flush();
 }
 
-void Display_ShowStatus(const char *state, uint32_t elapsed_ms, uint8_t battery_percent)
+void Display_ShowStatus(const char *state, uint32_t elapsed_ms, uint8_t battery_percent, const char *current_time)
 {
   char line[18];
   const uint32_t elapsed_s = elapsed_ms / 1000U;
@@ -246,6 +246,8 @@ void Display_ShowStatus(const char *state, uint32_t elapsed_ms, uint8_t battery_
   fb_text(0, 10, state);
   (void)snprintf(line, sizeof(line), "T%02lu:%02lu", elapsed_s / 60U, elapsed_s % 60U);
   fb_text(0, 20, line);
+  (void)snprintf(line, sizeof(line), "CLK %s", current_time);
+  fb_text(0, 30, line);
   fb_flush();
 }
 
