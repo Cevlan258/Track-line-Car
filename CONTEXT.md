@@ -1,6 +1,6 @@
 # 项目上下文
 
-更新时间：2026-05-28
+更新时间：2026-06-02
 
 ## 项目定位
 
@@ -122,10 +122,20 @@ tests\maix_link_protocol_test.c
 
 ## 当前开发状态
 
-当前工作分支：`codex/left-track-logic`
+当前工作分支：`codex/maixcam-gate-radar-adapt`
+
+LoRa 配置已按 2026-06-08 场次 team22 左赛道要求更新：
+
+- 队伍：team22，队名 `CIRCUIT_VOYAGE`。
+- 左赛道参数：信道 `10`，目标地址 `0x0001`。
+- 模块参数：900 MHz 频段，定点模式，空中速率 2.4 kbps，网络 ID `0x00`，包长 240，中继/密钥关闭。
+- `LoRa_Init()` 会通过 `USART2` 发送 AT 指令写入参数，并切回 `AT+HMODE=1`。
+- `LoRa_SendCheckpoint()` 在每帧前添加定点模式前缀 `00 01 0A`，随后发送队号、队名、时间、检查点和起点耗时文本。
 
 当前未提交改动包括：
 
+- `App/Inc/app_config.h`、`App/Src/lora.c`：team22 左赛道 LoRa 参数和定点模式发送前缀。
+- `CONTEXT.md`：记录 LoRa 配置更新。
 - `maixcam/main.py`：动态阈值、白底侧向过滤、左版地图评分、视觉拱门识别、雷达障碍避让、保守限速和丢线左搜。
 - `tests/maixcam_standalone_test.py`：MaixCAM 策略 host 侧测试，覆盖视觉拱门和雷达障碍解耦。
 - `docs/maixcam_protocol.md`：补充正式比赛固定左版地图、视觉拱门和雷达障碍职责说明。
