@@ -1,0 +1,8 @@
+id: cevlan
+name: 巡线小车
+version: 1.0.0
+author: Cevlan
+icon: ''
+desc: 基于传统lab的巡线小车
+files:
+  - main.py
