@@ -90,6 +90,70 @@ def _path(module, near_x, lookahead_x, far_x, rows=6, offset=0,
     }
 
 
+class FakeBlob:
+    def __init__(self, x, y, w, h, pixels=None):
+        self._x = x
+        self._y = y
+        self._w = w
+        self._h = h
+        self._pixels = pixels if pixels is not None else w * h
+
+    def x(self):
+        return self._x
+
+    def y(self):
+        return self._y
+
+    def w(self):
+        return self._w
+
+    def h(self):
+        return self._h
+
+    def pixels(self):
+        return self._pixels
+
+
+class FakeBlobImage:
+    def __init__(self, blobs):
+        self.blobs = blobs
+
+    def find_blobs(self, *args, **kwargs):
+        return list(self.blobs)
+
+
+def _line(module, center_x=160):
+    return {
+        "valid": True,
+        "offset": module.norm_offset(center_x),
+        "lookahead_offset": module.norm_offset(center_x),
+        "confidence": 80,
+        "road": module.ROAD_STRAIGHT,
+        "path": {"near_x": center_x, "lookahead_x": center_x, "far_x": center_x},
+        "paths": [],
+    }
+
+
+def _telemetry(module, distance_mm=5200, targets=None, lora_status=None):
+    return {
+        "distance_mm": distance_mm,
+        "lora_status": module.LORA_IDLE if lora_status is None else lora_status,
+        "targets": targets or [],
+    }
+
+
+def _target(x_mm, y_mm, valid=1, distance_mm=None):
+    if distance_mm is None:
+        distance_mm = int((x_mm * x_mm + y_mm * y_mm) ** 0.5)
+    return {
+        "valid": valid,
+        "x_mm": x_mm,
+        "y_mm": y_mm,
+        "speed_cm_s": 0,
+        "distance_mm": distance_mm,
+    }
+
+
 class MaixcamStandaloneTest(unittest.TestCase):
     def test_idle_without_stm32_runs_standalone_vision_debug(self):
         source = MAIN_PY.read_text(encoding="utf-8")
@@ -206,6 +270,103 @@ class MaixcamStandaloneTest(unittest.TestCase):
         }
 
         self.assertLessEqual(zone.speed_limit(line), module.LINE_COMPLEX_SPEED)
+
+    def test_post_corridor_gate_triggers_without_crossbar(self):
+        module = _load_main_module()
+        detector = module.VisionGateDetector()
+        img = FakeBlobImage([
+            FakeBlob(82, 72, 14, 86),
+            FakeBlob(224, 74, 14, 84),
+        ])
+        telemetry = _telemetry(module, distance_mm=5200)
+        line = _line(module, center_x=160)
+
+        events = []
+        for now in (0, 80, 160):
+            events.append(detector.update(img, line, telemetry, now))
+        events.append(detector.update(FakeBlobImage([]), line, telemetry, 260))
+        events.append(detector.update(FakeBlobImage([]), line, telemetry, 430))
+
+        self.assertEqual([1], [event for event in events if event])
+        self.assertEqual("locked", detector.state)
+
+    def test_post_corridor_rejects_posts_that_do_not_contain_line_center(self):
+        module = _load_main_module()
+        detector = module.VisionGateDetector()
+        img = FakeBlobImage([
+            FakeBlob(24, 72, 14, 86),
+            FakeBlob(116, 74, 14, 84),
+        ])
+        telemetry = _telemetry(module, distance_mm=5200)
+        line = _line(module, center_x=200)
+
+        for now in (0, 120, 260, 430):
+            self.assertEqual(0, detector.update(img, line, telemetry, now))
+        self.assertEqual("clear", detector.state)
+
+    def test_post_corridor_rejects_horizontal_or_single_post_shapes(self):
+        module = _load_main_module()
+        detector = module.VisionGateDetector()
+        telemetry = _telemetry(module, distance_mm=5200)
+        line = _line(module, center_x=160)
+
+        horizontal = FakeBlobImage([FakeBlob(72, 118, 160, 12)])
+        single_post = FakeBlobImage([FakeBlob(88, 72, 14, 86)])
+
+        self.assertEqual(0, detector.update(horizontal, line, telemetry, 0))
+        self.assertEqual("clear", detector.state)
+        self.assertEqual(0, detector.update(single_post, line, telemetry, 160))
+        self.assertEqual("clear", detector.state)
+
+    def test_post_corridor_counts_only_two_lora_gates(self):
+        module = _load_main_module()
+        detector = module.VisionGateDetector()
+        img = FakeBlobImage([
+            FakeBlob(82, 72, 14, 86),
+            FakeBlob(224, 74, 14, 84),
+        ])
+        line = _line(module, center_x=160)
+        telemetry = _telemetry(module, distance_mm=5200)
+
+        events = []
+        for base, distance in ((0, 5200), (1800, 6400), (3600, 7800)):
+            telemetry["distance_mm"] = distance
+            events.append(detector.update(img, line, telemetry, base))
+            events.append(detector.update(img, line, telemetry, base + 160))
+            events.append(detector.update(FakeBlobImage([]), line, telemetry, base + 260))
+            events.append(detector.update(FakeBlobImage([]), line, telemetry, base + 430))
+
+        self.assertEqual([1, 2], [event for event in events if event])
+
+    def test_radar_targets_do_not_trigger_vision_gate_lora(self):
+        module = _load_main_module()
+        detector = module.VisionGateDetector()
+        telemetry = _telemetry(module, distance_mm=5200, targets=[
+            _target(-300, 700),
+            _target(320, 720),
+        ])
+        line = _line(module, center_x=160)
+
+        for now in (0, 160, 320, 500):
+            self.assertEqual(0, detector.update(FakeBlobImage([]), line, telemetry, now))
+
+    def test_radar_obstacle_planner_starts_from_circle_zone_without_gate_event(self):
+        module = _load_main_module()
+        planner = module.RadarObstaclePlanner()
+        zone = module.ZonePlanner()
+        zone.zone = module.ZONE_CIRCLE_RECT
+        telemetry = _telemetry(module, distance_mm=8500, targets=[
+            _target(-360, 760),
+            _target(-420, 900),
+            _target(-390, 1040),
+        ])
+
+        for now in (0, 50, 100):
+            planner.update(telemetry, zone, now)
+
+        self.assertTrue(planner.active)
+        self.assertEqual(module.OBSTACLE_SIDE_LEFT, planner.obstacle_side)
+        self.assertEqual(module.AVOID_SIDE_RIGHT, planner.avoid_side)
 
 
 if __name__ == "__main__":
