@@ -17,5 +17,6 @@ uint8_t MaixLink_GetCommand(MaixLinkCommand *command, uint32_t timeout_ms);
 uint8_t MaixLink_IsFresh(uint32_t timeout_ms);
 void MaixLink_SetLoraStatus(uint8_t status);
 void MaixLink_UartRxCpltCallback(UART_HandleTypeDef *huart);
+void MaixLink_UartErrorCallback(UART_HandleTypeDef *huart);
 
 #endif

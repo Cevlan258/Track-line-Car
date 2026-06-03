@@ -19,7 +19,20 @@ void App_UartRxCpltCallback(UART_HandleTypeDef *huart)
   }
 }
 
+void App_UartErrorCallback(UART_HandleTypeDef *huart)
+{
+  if (huart->Instance == USART3)
+  {
+    MaixLink_UartErrorCallback(huart);
+  }
+}
+
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
   App_UartRxCpltCallback(huart);
+}
+
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+  App_UartErrorCallback(huart);
 }

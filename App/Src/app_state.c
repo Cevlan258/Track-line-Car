@@ -15,6 +15,15 @@ static uint32_t last_display_ms;
 static uint8_t pending_checkpoint;
 static uint8_t checkpoint_sent_mask;
 
+typedef enum
+{
+  APP_FAULT_NONE = 0,
+  APP_FAULT_LINK,
+  APP_FAULT_CMD
+} AppFaultReason;
+
+static AppFaultReason fault_reason = APP_FAULT_NONE;
+
 static uint32_t now_ms(void)
 {
   return osKernelGetTickCount();
@@ -33,9 +42,35 @@ static const char *state_name(AppStateId state)
   }
 }
 
+static const char *display_state_name(void)
+{
+  if (app_state != APP_STATE_FAULT)
+  {
+    return state_name(app_state);
+  }
+
+  switch (fault_reason)
+  {
+    case APP_FAULT_LINK: return "F LINK";
+    case APP_FAULT_CMD: return "F CMD";
+    case APP_FAULT_NONE:
+    default: return "FAULT";
+  }
+}
+
 static void enter_state(AppStateId next)
 {
   app_state = next;
+  if (next != APP_STATE_FAULT)
+  {
+    fault_reason = APP_FAULT_NONE;
+  }
+}
+
+static void enter_fault(AppFaultReason reason)
+{
+  fault_reason = reason;
+  app_state = APP_STATE_FAULT;
 }
 
 static int16_t clamp_i16(int16_t value, int16_t min_value, int16_t max_value)
@@ -70,7 +105,7 @@ static void update_status_display(void)
 
   if ((now - last_display_ms) >= APP_DISPLAY_PERIOD_MS)
   {
-    Display_ShowStatus(state_name(app_state), AppStart_ElapsedMs());
+    Display_ShowStatus(display_state_name(), AppStart_ElapsedMs());
     last_display_ms = now;
   }
 }
@@ -161,14 +196,14 @@ static void update_run_state(void)
   {
     stop_motion();
     MaixLink_SetLoraStatus(MAIX_LINK_LORA_IDLE);
-    enter_state(APP_STATE_FAULT);
+    enter_fault(APP_FAULT_LINK);
     return;
   }
 
   if (command.mode == MAIX_LINK_MODE_FAULT)
   {
     stop_motion();
-    enter_state(APP_STATE_FAULT);
+    enter_fault(APP_FAULT_CMD);
     return;
   }
 
@@ -211,6 +246,7 @@ void AppState_Init(void)
   last_display_ms = 0U;
   pending_checkpoint = 0U;
   checkpoint_sent_mask = 0U;
+  fault_reason = APP_FAULT_NONE;
   ax_robot_move_enable = 0U;
   MaixLink_SetLoraStatus(MAIX_LINK_LORA_IDLE);
   AX_ROBOT_ResetDistance();

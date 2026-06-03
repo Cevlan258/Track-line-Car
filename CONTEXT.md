@@ -1,6 +1,6 @@
 # 项目上下文
 
-更新时间：2026-05-28
+更新时间：2026-06-04
 
 ## 项目定位
 
@@ -20,8 +20,8 @@
 
 - `Core/Src/main.c`：HAL 初始化入口，初始化外设后进入 FreeRTOS。
 - `Core/Src/freertos.c`：创建 `Robot_Task` 和 `AppState_Task`。
-- `App/Src/app_state.c`：主状态机，负责启动、运行、LoRa、终点、故障状态；消费 MaixCAM 命令并写入底盘目标速度。
-- `App/Src/maix_link.c`、`App/Src/maix_link_protocol.c`：MaixCAM 串口协议收发，使用 `USART3`。
+- `App/Src/app_state.c`：主状态机，负责启动、运行、LoRa、终点、故障状态；消费 MaixCAM 命令并写入底盘目标速度。故障显示会区分 `F LINK` 链路超时和 `F CMD` MaixCAM 主动故障命令。
+- `App/Src/maix_link.c`、`App/Src/maix_link_protocol.c`：MaixCAM 串口协议收发，使用 `USART3`；USART3 出错后会丢弃半帧并重新开启单字节中断接收，降低上电噪声/溢出导致永久断链的概率。
 - `App/Src/radar.c`：雷达帧解析，向 MaixCAM 遥测提供目标列表。
 - `App/Src/lora.c`：LoRa 检查点发送。
 - `App/Src/ax_robot.c`、`App/Src/ax_kinematics.c`、`App/Src/ax_motor.c`、`App/Src/ax_servo.c`：底盘、电机、舵机闭环执行。
@@ -87,6 +87,7 @@ CAR_FIRST/
   tests/
     maix_link_protocol_test.c
     maixcam_standalone_test.py
+    stm32_fault_diagnostics_test.py
   CMakeLists.txt            顶层固件构建入口
   CMakePresets.json
   CAR_FIRST.ioc             CubeMX 工程
@@ -119,18 +120,24 @@ tests\maix_link_protocol_test.c
 
 ## 当前开发状态
 
-当前工作分支：`codex/left-track-logic`
+当前工作分支：`main`（本地落后 `origin/main` 5 个提交，继续合并/推送前需先确认远端状态）
 
 当前未提交改动包括：
 
+- `App/Inc/app_uart.h`、`App/Src/app_uart.c`：接入 `HAL_UART_ErrorCallback()`，USART3 错误转交 MaixLink 恢复。
+- `App/Inc/maix_link.h`、`App/Src/maix_link.c`：新增 MaixCAM 串口错误恢复入口，清除 ORE 并重新启动 `HAL_UART_Receive_IT()`。
+- `App/Src/app_state.c`：记录故障原因，OLED 显示 `F LINK` 或 `F CMD`，便于区分 MaixCAM 断帧和主动故障命令。
+- `tests/stm32_fault_diagnostics_test.py`：静态回归测试，覆盖 USART3 错误恢复接入和故障显示文案。
 - `maixcam/main.py`：动态阈值、白底侧向过滤、固定左版地图评分、保守限速和丢线左搜。
 - `tests/maixcam_standalone_test.py`：MaixCAM 策略 host 侧测试。
 - `docs/maixcam_protocol.md`：补充正式比赛固定左版地图说明。
 
 最近验证结果：
 
+- `python -B -m unittest tests.stm32_fault_diagnostics_test`：2 tests OK
 - `python -B -m unittest tests.maixcam_standalone_test`：11 tests OK
 - `python -B -m py_compile maixcam/main.py`：通过
+- `C:\Users\Administrator\AppData\Local\stm32cube\bundles\ninja\1.13.2+st.1\bin\ninja.exe -C build\Debug`：通过，生成 `CAR_FIRST.elf`
 
 继续开发前建议先执行：
 

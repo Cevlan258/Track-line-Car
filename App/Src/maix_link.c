@@ -175,3 +175,17 @@ void MaixLink_UartRxCpltCallback(UART_HandleTypeDef *huart)
   maix_link_feed(rx_byte);
   (void)HAL_UART_Receive_IT(&huart3, &rx_byte, 1U);
 }
+
+void MaixLink_UartErrorCallback(UART_HandleTypeDef *huart)
+{
+  if (huart->Instance != USART3)
+  {
+    return;
+  }
+
+  /* 串口错误后丢弃半帧并重新打开接收，避免上电噪声导致链路永久断开。 */
+  rx_index = 0U;
+  huart->ErrorCode = HAL_UART_ERROR_NONE;
+  __HAL_UART_CLEAR_OREFLAG(huart);
+  (void)HAL_UART_Receive_IT(&huart3, &rx_byte, 1U);
+}
