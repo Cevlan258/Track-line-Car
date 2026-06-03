@@ -124,8 +124,18 @@ tests\maix_link_protocol_test.c
 
 当前工作分支：`main`（本地落后 `origin/main` 5 个提交，继续合并/推送前需先确认远端状态）
 
+LoRa 配置已按 2026-06-08 场次 team22 左赛道要求更新：
+
+- 队伍：team22，队名 `CIRCUIT_VOYAGE`。
+- 左赛道参数：信道 `10`，模块地址 `0x0001`。
+- 模块参数：900 MHz 频段，透明传输模式，空中速率 2.4 kbps，网络 ID `0x00`，包长 240，中继/密钥关闭。
+- `LoRa_Init()` 会通过 `USART2` 发送 AT 指令写入参数，并切回 `AT+HMODE=1`。
+- `LoRa_SendCheckpoint()` 保持透明模式纯文本发送，不添加固定模式目标地址/信道前缀。
+
 当前未提交改动包括：
 
+- `App/Inc/app_config.h`、`App/Src/lora.c`：team22 左赛道 LoRa 参数，传输方式为 Transparent Mode。
+- `CONTEXT.md`：记录 team22 Transparent Mode LoRa 配置更新。
 - `App/Inc/app_uart.h`、`App/Src/app_uart.c`：接入 `HAL_UART_ErrorCallback()`，USART3 错误转交 MaixLink 恢复。
 - `App/Inc/maix_link.h`、`App/Src/maix_link.c`：新增 MaixCAM 串口错误恢复入口，清除 ORE 并重新启动 `HAL_UART_Receive_IT()`。
 - `App/Src/app_state.c`：记录故障原因，OLED 显示 `F LINK` 或 `F CMD`，便于区分 MaixCAM 断帧和主动故障命令。
