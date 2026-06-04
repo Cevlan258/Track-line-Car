@@ -112,16 +112,17 @@ static void update_status_display(void)
   if ((now - last_display_ms) >= APP_DISPLAY_PERIOD_MS)
   {
     char time_text[9];
+    const uint8_t battery_percent = AX_VIN_GetPercent(R_Bat_Vol);
 
     AppTime_GetBeijingTime(time_text, sizeof(time_text));
     if ((app_state == APP_STATE_RUN) && ((last_command_flags & MAIX_LINK_CMD_FLAG_AVOIDING) != 0U))
     {
       const RadarSample sample = Radar_GetSample();
-      Display_ShowRadarScope(&sample, last_command_flags, time_text);
+      Display_ShowRadarScope(&sample, last_command_flags, time_text, battery_percent);
     }
     else
     {
-      Display_ShowStatusTime(display_state_name(), AppStart_ElapsedMs(), time_text);
+      Display_ShowStatusTime(display_state_name(), AppStart_ElapsedMs(), time_text, battery_percent);
     }
     last_display_ms = now;
   }
@@ -182,7 +183,8 @@ static void update_lora_state(void)
 
   Display_ShowLora(pending_checkpoint,
                    checkpoint_already_sent(pending_checkpoint),
-                   AppStart_ElapsedMs());
+                   AppStart_ElapsedMs(),
+                   AX_VIN_GetPercent(R_Bat_Vol));
   pending_checkpoint = 0U;
   enter_state(APP_STATE_RUN);
 }

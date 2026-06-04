@@ -292,6 +292,19 @@ static void fb_text(uint8_t x, uint8_t y, const char *s)
   }
 }
 
+static void draw_battery_percent(uint8_t battery_percent)
+{
+  char line[6];
+
+  if (battery_percent > 100U)
+  {
+    battery_percent = 100U;
+  }
+
+  (void)snprintf(line, sizeof(line), "%3u%%", battery_percent);
+  fb_text(108, 0, line);
+}
+
 static void fb_flush(void)
 {
   uint8_t page;
@@ -359,13 +372,14 @@ void Display_Init(void)
   fb_flush();
 }
 
-void Display_ShowStatusTime(const char *state, uint32_t elapsed_ms, const char *time_text)
+void Display_ShowStatusTime(const char *state, uint32_t elapsed_ms, const char *time_text, uint8_t battery_percent)
 {
   char line[18];
   const uint32_t elapsed_s = elapsed_ms / 1000U;
 
   fb_clear();
   fb_text(0, 0, "TRACK CAR");
+  draw_battery_percent(battery_percent);
   fb_text(0, 10, state);
   (void)snprintf(line, sizeof(line), "T%02lu:%02lu", elapsed_s / 60U, elapsed_s % 60U);
   fb_text(0, 20, line);
@@ -378,7 +392,7 @@ void Display_ShowStatusTime(const char *state, uint32_t elapsed_ms, const char *
 
 void Display_ShowStatus(const char *state, uint32_t elapsed_ms)
 {
-  Display_ShowStatusTime(state, elapsed_ms, NULL);
+  Display_ShowStatusTime(state, elapsed_ms, NULL, 0U);
 }
 
 void Display_ShowLineSensor(const uint16_t *frame, const AX_CCD_LineInfo *info, const char *state, uint16_t vin_x100, uint8_t battery_percent)
@@ -387,8 +401,7 @@ void Display_ShowLineSensor(const uint16_t *frame, const AX_CCD_LineInfo *info, 
 
   fb_clear();
   fb_text(0, 0, state);
-  (void)snprintf(line, sizeof(line), "%3u%%", battery_percent);
-  fb_text(108, 0, line);
+  draw_battery_percent(battery_percent);
 
   if ((frame != NULL) && (info != NULL))
   {
@@ -440,8 +453,7 @@ void Display_ShowLineGate(const uint16_t *frame, const AX_CCD_LineInfo *info, co
 
   fb_clear();
   fb_text(0, 0, state);
-  (void)snprintf(line, sizeof(line), "%3u%%", battery_percent);
-  fb_text(108, 0, line);
+  draw_battery_percent(battery_percent);
 
   if ((sample != NULL) && (sample->valid != 0U))
   {
@@ -538,7 +550,7 @@ void Display_ShowRadar(const RadarSample *sample, RadarSide side, const char *st
   fb_flush();
 }
 
-void Display_ShowRadarScope(const RadarSample *sample, uint8_t avoid_flags, const char *time_text)
+void Display_ShowRadarScope(const RadarSample *sample, uint8_t avoid_flags, const char *time_text, uint8_t battery_percent)
 {
   char line[18];
   uint8_t i;
@@ -573,15 +585,16 @@ void Display_ShowRadarScope(const RadarSample *sample, uint8_t avoid_flags, cons
   }
 
   fb_text(0, 0, "AVOID RADAR");
+  draw_battery_percent(battery_percent);
   (void)snprintf(line, sizeof(line), "T%u F%02X", target_count, avoid_flags);
   fb_text(0, 8, line);
   if ((avoid_flags & RADAR_SCOPE_AVOIDING_FLAG) == 0U)
   {
-    fb_text(92, 0, "SCAN");
+    fb_text(76, 0, "SCAN");
   }
   else
   {
-    fb_text(96, 0, "RUN");
+    fb_text(80, 0, "RUN");
   }
   if ((time_text != NULL) && (time_text[0] != '\0'))
   {
@@ -591,7 +604,7 @@ void Display_ShowRadarScope(const RadarSample *sample, uint8_t avoid_flags, cons
   fb_flush();
 }
 
-void Display_ShowLora(uint8_t checkpoint, uint8_t sent, uint32_t elapsed_ms)
+void Display_ShowLora(uint8_t checkpoint, uint8_t sent, uint32_t elapsed_ms, uint8_t battery_percent)
 {
   char line[18];
   const uint32_t elapsed_s = elapsed_ms / 1000U;
@@ -599,6 +612,7 @@ void Display_ShowLora(uint8_t checkpoint, uint8_t sent, uint32_t elapsed_ms)
   fb_clear();
   (void)snprintf(line, sizeof(line), "LORA 2-%u", checkpoint);
   fb_text(0, 0, line);
+  draw_battery_percent(battery_percent);
   fb_text(0, 14, sent ? "SENT" : "SEND?");
   (void)snprintf(line, sizeof(line), "T%02lu:%02lu", elapsed_s / 60U, elapsed_s % 60U);
   fb_text(0, 28, line);

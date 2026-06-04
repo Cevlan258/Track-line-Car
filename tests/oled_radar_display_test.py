@@ -32,10 +32,24 @@ class OledRadarDisplayTest(unittest.TestCase):
         header_source = DISPLAY_H.read_text(encoding="utf-8")
 
         self.assertIn("AppTime_GetBeijingTime(time_text", app_state_source)
-        self.assertIn("Display_ShowStatusTime(display_state_name(), AppStart_ElapsedMs(), time_text)", app_state_source)
-        self.assertIn("Display_ShowRadarScope(&sample, last_command_flags, time_text)", app_state_source)
-        self.assertIn("void Display_ShowStatusTime(const char *state, uint32_t elapsed_ms, const char *time_text)", header_source)
+        self.assertIn("Display_ShowStatusTime(display_state_name(), AppStart_ElapsedMs(), time_text, battery_percent)", app_state_source)
+        self.assertIn("Display_ShowRadarScope(&sample, last_command_flags, time_text, battery_percent)", app_state_source)
+        self.assertIn("void Display_ShowStatusTime(const char *state, uint32_t elapsed_ms, const char *time_text, uint8_t battery_percent)", header_source)
         self.assertIn("time_text", display_source)
+
+    def test_status_radar_and_lora_pages_receive_battery_percent(self):
+        app_state_source = APP_STATE_C.read_text(encoding="utf-8")
+        display_source = DISPLAY_C.read_text(encoding="utf-8")
+        header_source = DISPLAY_H.read_text(encoding="utf-8")
+
+        self.assertIn("static void draw_battery_percent(uint8_t battery_percent)", display_source)
+        self.assertIn("void Display_ShowStatusTime(const char *state, uint32_t elapsed_ms, const char *time_text, uint8_t battery_percent)", header_source)
+        self.assertIn("void Display_ShowRadarScope(const RadarSample *sample, uint8_t avoid_flags, const char *time_text, uint8_t battery_percent)", header_source)
+        self.assertIn("void Display_ShowLora(uint8_t checkpoint, uint8_t sent, uint32_t elapsed_ms, uint8_t battery_percent)", header_source)
+        self.assertIn("const uint8_t battery_percent = AX_VIN_GetPercent(R_Bat_Vol);", app_state_source)
+        self.assertIn("Display_ShowStatusTime(display_state_name(), AppStart_ElapsedMs(), time_text, battery_percent)", app_state_source)
+        self.assertIn("Display_ShowRadarScope(&sample, last_command_flags, time_text, battery_percent)", app_state_source)
+        self.assertIn("AppStart_ElapsedMs(),\n                   AX_VIN_GetPercent(R_Bat_Vol));", app_state_source)
 
 
 if __name__ == "__main__":

@@ -88,6 +88,17 @@ LINE_MAX_YAW = 1800
 LINE_KP = 11
 LINE_PREVIEW_KP = 9
 LINE_KD = 5
+LINE_PID_OFFSET_WEIGHT = 0.65
+LINE_PID_PREVIEW_WEIGHT = 0.35
+LINE_PID_INTEGRAL_ACTIVE_ERROR = 30
+LINE_PID_INTEGRAL_LIMIT = 260
+LINE_PID_FEEDFORWARD = 120
+LINE_PID_BOOT = (14.0, 0.35, 4.5)
+LINE_PID_NORMAL = (18.0, 0.70, 6.0)
+LINE_PID_COMPLEX = (23.0, 0.85, 8.0)
+LINE_YAW_SLOW_1 = 600
+LINE_YAW_SLOW_2 = 1000
+LINE_YAW_SLOW_3 = 1350
 
 SEARCH_SPEED = 120
 SEARCH_YAW = 900
@@ -167,6 +178,18 @@ TRACK_SIDE_BONUS = 34
 TRACK_SIDE_PENALTY = 28
 TRACK_FAR_BONUS = 22
 TRACK_FAR_PENALTY = 18
+UTURN_EDGE_MARGIN = 26
+UTURN_CURVATURE_MIN = 70
+UTURN_HEADING_MIN = 45
+UTURN_EDGE_SPEED = 120
+UTURN_EDGE_YAW = 1350
+UTURN_LOCK_FRAMES = 18
+UTURN_EDGE_ZONES = (
+    ZONE_MIRROR_DISCOVERY,
+    ZONE_S_CURVE,
+    ZONE_RECT_ZONE,
+    ZONE_CIRCLE_RECT,
+)
 
 
 def ticks_ms():
@@ -205,6 +228,30 @@ def side_score(x, expected_sign, bonus, penalty):
 
 def norm_offset(x):
     return int(clamp(((x - CENTER_X) * 127) // IMG_W, -64, 63))
+
+
+def uturn_edge_sign(path):
+    xs = (path["near_x"], path["lookahead_x"], path["far_x"])
+    left_gap = min(xs)
+    right_gap = IMG_W - max(xs)
+    left_edge = left_gap <= UTURN_EDGE_MARGIN
+    right_edge = right_gap <= UTURN_EDGE_MARGIN
+    if left_edge and right_edge:
+        return -1 if left_gap <= right_gap else 1
+    if left_edge:
+        return -1
+    if right_edge:
+        return 1
+    return 0
+
+
+def path_has_uturn_edge_loss_risk(path, zone_planner):
+    if path is None:
+        return False
+    if zone_planner is not None and zone_planner.zone not in UTURN_EDGE_ZONES:
+        return False
+    sharp_path = path["curvature"] >= UTURN_CURVATURE_MIN or abs(path["heading"]) >= UTURN_HEADING_MIN
+    return sharp_path and uturn_edge_sign(path) != 0
 
 
 def crc16(data):
@@ -639,6 +686,9 @@ class PathGraph:
             "loop_score": loop_score,
             "road": road,
             "score": 0,
+            "edge_loss_risk": False,
+            "edge_sign": 0,
+            "recovery_mode": "",
         }
 
 
@@ -698,15 +748,13 @@ class ZonePlanner:
     def tangent_locked(self, now):
         return now < self.tangent_lock_until
 
-    def speed_limit(self, line):
+    def speed_limit(self, line, yaw=0):
         if self.zone in (ZONE_BOOT_LOCAL, ZONE_DEAD_END_FILTER, ZONE_MIRROR_DISCOVERY):
             base = LINE_BOOT_SPEED
-        elif self.zone in (ZONE_RECT_ZONE, ZONE_CIRCLE_RECT):
-            base = LINE_COMPLEX_SPEED
         elif self.zone == ZONE_FINISH_APPROACH:
             base = LINE_FINISH_SPEED
         else:
-            base = LINE_LOOP_SPEED
+            base = LINE_SPEED
 
         path = line.get("path")
         if line.get("confidence", 100) < 60:
@@ -714,8 +762,16 @@ class ZonePlanner:
         if path is not None:
             if path.get("branches", 0) >= 2 or len(line.get("paths", [])) >= 3:
                 base = min(base, LINE_COMPLEX_SPEED)
-            if path.get("curvature", 0) > 80:
+            if path.get("curvature", 0) > 70:
                 base = min(base, LINE_COMPLEX_SPEED)
+
+        yaw_abs = abs(yaw)
+        if yaw_abs > LINE_YAW_SLOW_3:
+            base = min(base, UTURN_EDGE_SPEED)
+        elif yaw_abs > LINE_YAW_SLOW_2:
+            base = min(base, 170)
+        elif yaw_abs > LINE_YAW_SLOW_1:
+            base = min(base, 220)
 
         offset_abs = abs(line["offset"])
         if offset_abs > 14:
@@ -799,18 +855,76 @@ class PathScorer:
         return score
 
 
+class SteeringPid:
+    def __init__(self):
+        self.integral = 0
+        self.last_error = None
+
+    def reset(self):
+        self.integral = 0
+        self.last_error = None
+
+    def _gains(self, zone_planner):
+        zone = zone_planner.zone if zone_planner is not None else ZONE_BOOT_LOCAL
+        if zone in (ZONE_RECT_ZONE, ZONE_CIRCLE_RECT, ZONE_S_CURVE):
+            return LINE_PID_COMPLEX
+        if zone in (ZONE_BOOT_LOCAL, ZONE_DEAD_END_FILTER, ZONE_MIRROR_DISCOVERY):
+            return LINE_PID_BOOT
+        return LINE_PID_NORMAL
+
+    def update(self, offset, preview, road, zone_planner):
+        error = offset * LINE_PID_OFFSET_WEIGHT + preview * LINE_PID_PREVIEW_WEIGHT
+        kp, ki, kd = self._gains(zone_planner)
+
+        if abs(error) < LINE_PID_INTEGRAL_ACTIVE_ERROR:
+            self.integral = clamp(self.integral + error,
+                                  -LINE_PID_INTEGRAL_LIMIT,
+                                  LINE_PID_INTEGRAL_LIMIT)
+        else:
+            self.integral = 0
+
+        if self.last_error is None:
+            derivative = 0
+        else:
+            derivative = error - self.last_error
+        self.last_error = error
+
+        feedforward = 0
+        if road == ROAD_LEFT_CURVE:
+            feedforward = -LINE_PID_FEEDFORWARD
+        elif road == ROAD_RIGHT_CURVE:
+            feedforward = LINE_PID_FEEDFORWARD
+
+        yaw = kp * error + ki * self.integral + kd * derivative + feedforward
+        return int(clamp(yaw, -LINE_MAX_YAW, LINE_MAX_YAW))
+
+
 class CommandPlanner:
     def __init__(self):
         self.last_bias = 0
         self.last_valid_bias = 0
         self.lost_frames = 0
         self.search_frames = 0
+        self.uturn_lock_frames = 0
+        self.uturn_lock_sign = 0
+        self.steering_pid = SteeringPid()
 
-    def make_line(self, path, paths):
-        return make_line_from_path(path, paths, self.last_valid_bias)
+    def make_line(self, path, paths, zone_planner=None):
+        return make_line_from_path(path, paths, self.last_valid_bias, zone_planner)
 
     def command_from_line(self, line, zone_planner):
         if not line["valid"]:
+            self.steering_pid.reset()
+            if self.uturn_lock_frames > 0:
+                self.uturn_lock_frames -= 1
+                search_sign = self.uturn_lock_sign
+                if search_sign == 0:
+                    search_sign = TRACK_FIXED_MAP_SIGN if TRACK_FIXED_MAP_SIGN != 0 else 1
+                line["edge_sign"] = search_sign
+                line["recovery_mode"] = "uturn_edge"
+                line["uturn_lock_frames"] = self.uturn_lock_frames
+                return SEARCH_SPEED, SEARCH_YAW * search_sign, 0
+
             self.lost_frames += 1
             if self.lost_frames <= LOST_HOLD_FRAMES:
                 return LINE_MIN_SPEED, self.last_valid_bias * LINE_KP, 0
@@ -828,19 +942,34 @@ class CommandPlanner:
         self.search_frames = 0
         bias = line["offset"]
         preview = line["lookahead_offset"]
-        yaw = bias * LINE_KP + preview * LINE_PREVIEW_KP + (bias - self.last_bias) * LINE_KD
 
-        if line["road"] == ROAD_LEFT_CURVE:
-            yaw -= 120
-        elif line["road"] == ROAD_RIGHT_CURVE:
-            yaw += 120
+        if line.get("edge_loss_risk"):
+            edge_sign = line.get("edge_sign", 0)
+            if edge_sign == 0:
+                edge_sign = self.uturn_lock_sign
+            if edge_sign == 0:
+                edge_sign = TRACK_FIXED_MAP_SIGN if TRACK_FIXED_MAP_SIGN != 0 else 1
+            self.steering_pid.reset()
+            self.uturn_lock_frames = UTURN_LOCK_FRAMES
+            self.uturn_lock_sign = edge_sign
+            self.last_bias = bias
+            self.last_valid_bias = bias
+            line["edge_sign"] = edge_sign
+            line["recovery_mode"] = "uturn_edge"
+            line["uturn_lock_frames"] = self.uturn_lock_frames
+            return UTURN_EDGE_SPEED, UTURN_EDGE_YAW * edge_sign, CMD_FLAG_LINE_VALID
+
+        self.uturn_lock_frames = 0
+        self.uturn_lock_sign = 0
+        line["uturn_lock_frames"] = 0
+        yaw = self.steering_pid.update(bias, preview, line["road"], zone_planner)
 
         self.last_bias = bias
         self.last_valid_bias = bias
-        return zone_planner.speed_limit(line), int(clamp(yaw, -LINE_MAX_YAW, LINE_MAX_YAW)), CMD_FLAG_LINE_VALID
+        return zone_planner.speed_limit(line, yaw), yaw, CMD_FLAG_LINE_VALID
 
 
-def make_line_from_path(path, paths, fallback_bias=0):
+def make_line_from_path(path, paths, fallback_bias=0, zone_planner=None):
     if path is None:
         return {
             "valid": False,
@@ -850,6 +979,10 @@ def make_line_from_path(path, paths, fallback_bias=0):
             "road": ROAD_UNKNOWN,
             "path": None,
             "paths": paths,
+            "edge_loss_risk": False,
+            "edge_sign": 0,
+            "recovery_mode": "",
+            "uturn_lock_frames": 0,
         }
 
     confidence = 35 + path["rows"] * 8
@@ -859,6 +992,12 @@ def make_line_from_path(path, paths, fallback_bias=0):
         confidence += 8
     confidence -= min(25, int(abs(path["offset"]) * 0.35))
     confidence = int(clamp(confidence, 0, 100))
+    edge_loss_risk = path_has_uturn_edge_loss_risk(path, zone_planner)
+    edge_sign = uturn_edge_sign(path) if edge_loss_risk else 0
+    recovery_mode = "uturn_edge" if edge_loss_risk else ""
+    path["edge_loss_risk"] = edge_loss_risk
+    path["edge_sign"] = edge_sign
+    path["recovery_mode"] = recovery_mode
 
     return {
         "valid": True,
@@ -868,6 +1007,10 @@ def make_line_from_path(path, paths, fallback_bias=0):
         "road": path["road"],
         "path": path,
         "paths": paths,
+        "edge_loss_risk": edge_loss_risk,
+        "edge_sign": edge_sign,
+        "recovery_mode": recovery_mode,
+        "uturn_lock_frames": 0,
     }
 
 
@@ -1148,6 +1291,19 @@ class RadarObstaclePlanner:
 class SimpleDebugView:
     def __init__(self):
         self.disp = display.Display()
+        self.display_error_reported = False
+
+    def status(self, title, detail=""):
+        try:
+            img = image.Image(IMG_W, IMG_H)
+            img.draw_string(4, 6, str(title), COLOR_GREEN)
+            if detail:
+                img.draw_string(4, 26, str(detail)[:42], COLOR_RED)
+            self.disp.show(img)
+        except Exception as exc:
+            if not self.display_error_reported:
+                print("display status error:", exc)
+                self.display_error_reported = True
 
     def show(self, img, rows, line, zone_planner, mode, telemetry, gate=None, obstacle=None):
         try:
@@ -1183,6 +1339,16 @@ class SimpleDebugView:
                                                                        obstacle.right_score,
                                                                        obstacle.avoid_side),
                                 COLOR_RED)
+                overlay_y += 16
+            if line.get("recovery_mode") == "uturn_edge" or line.get("edge_loss_risk"):
+                edge_label = "?"
+                if line.get("edge_sign", 0) < 0:
+                    edge_label = "L"
+                elif line.get("edge_sign", 0) > 0:
+                    edge_label = "R"
+                img.draw_string(2, overlay_y, "UEDGE {} F{}".format(edge_label,
+                                                                    line.get("uturn_lock_frames", 0)),
+                                COLOR_RED)
             draw_scan_bands(img, rows)
             for row in rows:
                 for seg in row["segments"]:
@@ -1203,15 +1369,17 @@ class SimpleDebugView:
             if zone_planner.tangent_locked(ticks_ms()):
                 img.draw_string(2, 66, "TANGENT", COLOR_RED)
             self.disp.show(img)
-        except Exception:
-            pass
+        except Exception as exc:
+            if not self.display_error_reported:
+                print("debug display error:", exc)
+                self.display_error_reported = True
 
 
 def run_vision_pipeline(img, extractor, graph, scorer, zone_planner, now, fallback_bias=0):
     rows = extractor.extract(img)
     paths = graph.build(rows)
     selected = scorer.select(paths, zone_planner, now)
-    line = make_line_from_path(selected, paths, fallback_bias)
+    line = make_line_from_path(selected, paths, fallback_bias, zone_planner)
     line["segments"] = sum(len(row["segments"]) for row in rows)
     line["black_l_max"] = extractor.black_threshold[1]
     line["white_l_min"] = extractor.white_threshold[0]
@@ -1220,8 +1388,25 @@ def run_vision_pipeline(img, extractor, graph, scorer, zone_planner, now, fallba
 
 
 def main():
-    cam = CameraAcq()
-    link = UartLink()
+    debug = SimpleDebugView()
+    debug.status("MaixCAM boot", "display ready")
+
+    try:
+        cam = CameraAcq()
+    except Exception as exc:
+        print("camera init error:", exc)
+        debug.status("Camera init error", exc)
+        while not app.need_exit():
+            time.sleep_ms(200)
+        return
+
+    try:
+        link = UartLink()
+    except Exception as exc:
+        print("uart init error:", exc)
+        debug.status("UART offline", exc)
+        link = None
+
     extractor = ScanlineExtractor()
     graph = PathGraph()
     zone = ZonePlanner()
@@ -1229,18 +1414,38 @@ def main():
     command_planner = CommandPlanner()
     gate = VisionGateDetector()
     obstacle = RadarObstaclePlanner()
-    debug = SimpleDebugView()
     pending_checkpoint = 0
     checkpoint_status_armed = False
 
     while not app.need_exit():
-        telemetry = link.poll()
-        img = cam.read()
+        telemetry = None
+        if link is not None:
+            try:
+                telemetry = link.poll()
+            except Exception as exc:
+                print("uart poll error:", exc)
+                debug.status("UART poll error", exc)
+                link = None
+
+        try:
+            img = cam.read()
+        except Exception as exc:
+            print("camera read error:", exc)
+            debug.status("Camera read error", exc)
+            time.sleep_ms(200)
+            continue
+
         now = ticks_ms()
 
-        if telemetry is None or not link.started():
+        if telemetry is None or link is None or not link.started():
             rows, _, line = run_vision_pipeline(img, extractor, graph, scorer, zone, now)
-            link.send_command(MODE_IDLE, 0, 0, 0, zone.route_step, 0, 0)
+            if link is not None:
+                try:
+                    link.send_command(MODE_IDLE, 0, 0, 0, zone.route_step, 0, 0)
+                except Exception as exc:
+                    print("uart command error:", exc)
+                    debug.status("UART command error", exc)
+                    link = None
             debug.show(img, rows, line, zone, MODE_IDLE, telemetry, gate, obstacle)
             time.sleep_ms(5)
             continue

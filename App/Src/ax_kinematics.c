@@ -4,6 +4,60 @@
 #include "ax_robot.h"
 #include "ax_servo.h"
 #include "ax_speed.h"
+#include "app_config.h"
+
+static int16_t abs_i16(int16_t value)
+{
+  return (value < 0) ? (int16_t)(0 - value) : value;
+}
+
+static float clamp_f32(float value, float min_value, float max_value)
+{
+  if (value < min_value)
+  {
+    return min_value;
+  }
+  if (value > max_value)
+  {
+    return max_value;
+  }
+  return value;
+}
+
+static void apply_inner_wheel_slowdown(void)
+{
+  const float turn_ratio = clamp_f32((float)abs_i16(R_Vel.TG_IW) / (float)APP_MAIX_MAX_YAW,
+                                     0.0f,
+                                     1.0f);
+  float inner_scale;
+
+  if ((R_Vel.TG_IW == 0) || (R_Vel.TG_IX == 0))
+  {
+    return;
+  }
+
+  inner_scale = 1.0f - (turn_ratio * ((float)APP_TURN_INNER_SLOWDOWN_PCT / 100.0f));
+  inner_scale = clamp_f32(inner_scale,
+                          (float)APP_TURN_INNER_MIN_SCALE_PCT / 100.0f,
+                          1.0f);
+
+  if (R_Vel.TG_IW > 0)
+  {
+#if APP_TURN_POSITIVE_YAW_SLOWS_MOTOR_A
+    R_Wheel_A.TG *= inner_scale;
+#else
+    R_Wheel_B.TG *= inner_scale;
+#endif
+  }
+  else
+  {
+#if APP_TURN_POSITIVE_YAW_SLOWS_MOTOR_A
+    R_Wheel_B.TG *= inner_scale;
+#else
+    R_Wheel_A.TG *= inner_scale;
+#endif
+  }
+}
 
 void AX_ROBOT_Kinematics(void)
 {
@@ -53,6 +107,7 @@ void AX_ROBOT_Kinematics(void)
 
   R_Wheel_A.TG = R_Vel.TG_FX;
   R_Wheel_B.TG = R_Vel.TG_FX;
+  apply_inner_wheel_slowdown();
 
   R_Wheel_A.PWM = AX_SPEED_PidCtlA(R_Wheel_A.TG, (float)R_Wheel_A.RT);
   R_Wheel_B.PWM = AX_SPEED_PidCtlB(R_Wheel_B.TG, (float)R_Wheel_B.RT);

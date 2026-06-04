@@ -1,4 +1,6 @@
 import ast
+import contextlib
+import io
 import importlib.util
 import sys
 import types
@@ -122,6 +124,26 @@ class FakeBlobImage:
         return list(self.blobs)
 
 
+class FakeRuntimeImage:
+    def __init__(self, *args):
+        self.draw_calls = []
+
+    def get_statistics(self, *args, **kwargs):
+        return types.SimpleNamespace(l_mean=lambda: 72)
+
+    def find_blobs(self, *args, **kwargs):
+        return []
+
+    def draw_string(self, *args, **kwargs):
+        self.draw_calls.append(("draw_string", args, kwargs))
+
+    def draw_rect(self, *args, **kwargs):
+        self.draw_calls.append(("draw_rect", args, kwargs))
+
+    def draw_line(self, *args, **kwargs):
+        self.draw_calls.append(("draw_line", args, kwargs))
+
+
 def _line(module, center_x=160):
     return {
         "valid": True,
@@ -195,6 +217,46 @@ class MaixcamStandaloneTest(unittest.TestCase):
 
         self.assertIn("draw_rect", called_names)
         self.assertNotIn("draw_rectangle", called_names)
+
+    def test_main_keeps_display_running_when_uart_initialization_fails(self):
+        module = _load_main_module()
+        shown_frames = []
+        read_count = {"count": 0}
+
+        class FakeDisplay:
+            def show(self, img):
+                shown_frames.append(img)
+
+        class FakeCameraDevice:
+            def read(self):
+                read_count["count"] += 1
+                return FakeRuntimeImage()
+
+        exit_checks = {"count": 0}
+
+        def need_exit():
+            exit_checks["count"] += 1
+            return exit_checks["count"] > 1
+
+        module.app.need_exit = need_exit
+        module.camera.Camera = lambda *args, **kwargs: FakeCameraDevice()
+        module.display.Display = lambda *args, **kwargs: FakeDisplay()
+        module.image.Image = FakeRuntimeImage
+        module.pinmap.set_pin_function = lambda *args, **kwargs: None
+
+        def fail_uart(*args, **kwargs):
+            raise RuntimeError("uart offline")
+
+        module.uart.UART = fail_uart
+        module.time.ticks_ms = lambda: 0
+        module.time.time = lambda: 0
+        module.time.sleep_ms = lambda *args, **kwargs: None
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            module.main()
+
+        self.assertEqual(1, read_count["count"])
+        self.assertTrue(shown_frames)
 
     def test_path_graph_fallback_skips_segments_already_connected_to_path(self):
         tree = _load_tree()
@@ -270,6 +332,110 @@ class MaixcamStandaloneTest(unittest.TestCase):
         }
 
         self.assertLessEqual(zone.speed_limit(line), module.LINE_COMPLEX_SPEED)
+
+    def test_steering_pid_combines_offset_preview_and_integral(self):
+        module = _load_main_module()
+        zone = module.ZonePlanner()
+        pid = module.SteeringPid()
+
+        first = pid.update(10, 4, module.ROAD_STRAIGHT, zone)
+        second = pid.update(10, 4, module.ROAD_STRAIGHT, zone)
+
+        self.assertGreater(second, first)
+        self.assertGreater(pid.integral, 0)
+
+    def test_steering_pid_limits_integral_and_resets_on_lost_line(self):
+        module = _load_main_module()
+        zone = module.ZonePlanner()
+        planner = module.CommandPlanner()
+        line = _line(module, center_x=190)
+
+        for _ in range(80):
+            planner.command_from_line(line, zone)
+
+        self.assertLessEqual(abs(planner.steering_pid.integral), module.LINE_PID_INTEGRAL_LIMIT)
+
+        lost_line = module.make_line_from_path(None, [], 0, zone)
+        planner.command_from_line(lost_line, zone)
+
+        self.assertEqual(0, planner.steering_pid.integral)
+
+    def test_complex_zone_uses_stronger_pid_than_boot_zone(self):
+        module = _load_main_module()
+        boot = module.ZonePlanner()
+        boot.zone = module.ZONE_BOOT_LOCAL
+        complex_zone = module.ZonePlanner()
+        complex_zone.zone = module.ZONE_S_CURVE
+
+        boot_yaw = module.SteeringPid().update(18, 14, module.ROAD_STRAIGHT, boot)
+        complex_yaw = module.SteeringPid().update(18, 14, module.ROAD_STRAIGHT, complex_zone)
+
+        self.assertGreater(abs(complex_yaw), abs(boot_yaw))
+
+    def test_straight_high_confidence_line_can_use_cruise_speed(self):
+        module = _load_main_module()
+        zone = module.ZonePlanner()
+        zone.zone = module.ZONE_S_CURVE
+        planner = module.CommandPlanner()
+        path = _path(module, near_x=160, lookahead_x=160, far_x=160,
+                     offset=0, lookahead_offset=0, curvature=0, branches=1)
+        line = module.make_line_from_path(path, [path], 0, zone)
+
+        vx, yaw, flags = planner.command_from_line(line, zone)
+
+        self.assertGreaterEqual(vx, 260)
+        self.assertEqual(0, yaw)
+        self.assertEqual(module.CMD_FLAG_LINE_VALID, flags)
+
+    def test_left_uturn_edge_path_locks_low_speed_left_yaw(self):
+        module = _load_main_module()
+        zone = module.ZonePlanner()
+        zone.zone = module.ZONE_S_CURVE
+        planner = module.CommandPlanner()
+        path = _path(module, near_x=46, lookahead_x=20, far_x=12,
+                     lookahead_offset=-56, curvature=85)
+
+        line = module.make_line_from_path(path, [path], 0, zone)
+        vx, yaw, flags = planner.command_from_line(line, zone)
+
+        self.assertTrue(line["edge_loss_risk"])
+        self.assertEqual(0, planner.steering_pid.integral)
+        self.assertEqual(-1, line["edge_sign"])
+        self.assertEqual("uturn_edge", line["recovery_mode"])
+        self.assertEqual(module.UTURN_EDGE_SPEED, vx)
+        self.assertEqual(-module.UTURN_EDGE_YAW, yaw)
+        self.assertEqual(module.CMD_FLAG_LINE_VALID, flags)
+
+    def test_uturn_edge_lock_continues_same_direction_when_line_is_lost(self):
+        module = _load_main_module()
+        zone = module.ZonePlanner()
+        zone.zone = module.ZONE_S_CURVE
+        planner = module.CommandPlanner()
+        edge_path = _path(module, near_x=46, lookahead_x=20, far_x=12,
+                          lookahead_offset=-56, curvature=85)
+        edge_line = module.make_line_from_path(edge_path, [edge_path], 0, zone)
+        planner.command_from_line(edge_line, zone)
+        lost_line = module.make_line_from_path(None, [], 0, zone)
+
+        vx, yaw, flags = planner.command_from_line(lost_line, zone)
+
+        self.assertEqual(module.SEARCH_SPEED, vx)
+        self.assertEqual(-module.SEARCH_YAW, yaw)
+        self.assertEqual(0, flags)
+        self.assertEqual("uturn_edge", lost_line["recovery_mode"])
+
+    def test_centered_non_edge_curve_does_not_enter_uturn_recovery(self):
+        module = _load_main_module()
+        zone = module.ZonePlanner()
+        zone.zone = module.ZONE_S_CURVE
+        path = _path(module, near_x=150, lookahead_x=166, far_x=180,
+                     lookahead_offset=6, curvature=45)
+
+        line = module.make_line_from_path(path, [path], 0, zone)
+
+        self.assertFalse(line["edge_loss_risk"])
+        self.assertEqual(0, line["edge_sign"])
+        self.assertEqual("", line["recovery_mode"])
 
     def test_post_corridor_gate_triggers_without_crossbar(self):
         module = _load_main_module()
