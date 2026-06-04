@@ -1,0 +1,8 @@
+id: cevlan
+name: 小车V2
+version: 1.0.0
+author: Cevlan
+icon: ''
+desc: 识别黑线
+files:
+  - main.py

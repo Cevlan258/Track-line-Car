@@ -14,6 +14,7 @@ static AppStateId app_state = APP_STATE_IDLE;
 static uint32_t last_display_ms;
 static uint8_t pending_checkpoint;
 static uint8_t checkpoint_sent_mask;
+static uint8_t last_command_flags;
 
 typedef enum
 {
@@ -61,6 +62,10 @@ static const char *display_state_name(void)
 static void enter_state(AppStateId next)
 {
   app_state = next;
+  if (next != APP_STATE_RUN)
+  {
+    last_command_flags = 0U;
+  }
   if (next != APP_STATE_FAULT)
   {
     fault_reason = APP_FAULT_NONE;
@@ -71,6 +76,7 @@ static void enter_fault(AppFaultReason reason)
 {
   fault_reason = reason;
   app_state = APP_STATE_FAULT;
+  last_command_flags = 0U;
 }
 
 static int16_t clamp_i16(int16_t value, int16_t min_value, int16_t max_value)
@@ -105,7 +111,18 @@ static void update_status_display(void)
 
   if ((now - last_display_ms) >= APP_DISPLAY_PERIOD_MS)
   {
-    Display_ShowStatus(display_state_name(), AppStart_ElapsedMs());
+    char time_text[9];
+
+    AppTime_GetBeijingTime(time_text, sizeof(time_text));
+    if ((app_state == APP_STATE_RUN) && ((last_command_flags & MAIX_LINK_CMD_FLAG_AVOIDING) != 0U))
+    {
+      const RadarSample sample = Radar_GetSample();
+      Display_ShowRadarScope(&sample, last_command_flags, time_text);
+    }
+    else
+    {
+      Display_ShowStatusTime(display_state_name(), AppStart_ElapsedMs(), time_text);
+    }
     last_display_ms = now;
   }
 }
@@ -180,6 +197,7 @@ static void apply_maix_command(const MaixLinkCommand *command)
 
   if (command->mode == MAIX_LINK_MODE_IDLE)
   {
+    last_command_flags = 0U;
     stop_motion();
     return;
   }
@@ -194,6 +212,7 @@ static void update_run_state(void)
 
   if (MaixLink_GetCommand(&command, APP_MAIX_LINK_TIMEOUT_MS) == 0U)
   {
+    last_command_flags = 0U;
     stop_motion();
     MaixLink_SetLoraStatus(MAIX_LINK_LORA_IDLE);
     enter_fault(APP_FAULT_LINK);
@@ -202,14 +221,18 @@ static void update_run_state(void)
 
   if (command.mode == MAIX_LINK_MODE_FAULT)
   {
+    last_command_flags = 0U;
     stop_motion();
     enter_fault(APP_FAULT_CMD);
     return;
   }
 
+  last_command_flags = command.flags;
+
   if ((command.mode == MAIX_LINK_MODE_FINISH) ||
       ((command.flags & MAIX_LINK_CMD_FLAG_FINISH) != 0U))
   {
+    last_command_flags = 0U;
     stop_motion();
     enter_state(APP_STATE_FINISH);
     return;
@@ -246,6 +269,7 @@ void AppState_Init(void)
   last_display_ms = 0U;
   pending_checkpoint = 0U;
   checkpoint_sent_mask = 0U;
+  last_command_flags = 0U;
   fault_reason = APP_FAULT_NONE;
   ax_robot_move_enable = 0U;
   MaixLink_SetLoraStatus(MAIX_LINK_LORA_IDLE);

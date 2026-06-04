@@ -8,9 +8,17 @@
 #define OLED_W 128U
 #define OLED_H 64U
 #define OLED_PAGES 8U
+#define RADAR_SCOPE_CENTER_X 64
+#define RADAR_SCOPE_CENTER_Y 0
+#define RADAR_SCOPE_RADIUS 63U
+#define RADAR_SCOPE_RINGS 5U
+#define RADAR_SCOPE_MAX_Y_MM 1800
+#define RADAR_SCOPE_MAX_X_MM 1000
+#define RADAR_SCOPE_AVOIDING_FLAG 0x04U
 
 static uint8_t fb[OLED_W * OLED_PAGES];
 static uint8_t display_ready;
+static const int8_t radar_scope_endpoint_x[] = {-63, -49, -33, -17, 0, 17, 33, 49, 63};
 
 static void oled_select(void)
 {
@@ -76,6 +84,123 @@ static void fb_vline(uint8_t x, uint8_t y0, uint8_t y1)
   {
     fb_pixel(x, y, 1);
   }
+}
+
+static void fb_line_i16(int16_t x0, int16_t y0, int16_t x1, int16_t y1)
+{
+  int16_t dx = (x0 < x1) ? (int16_t)(x1 - x0) : (int16_t)(x0 - x1);
+  int16_t sx = (x0 < x1) ? 1 : -1;
+  int16_t dy = (y0 < y1) ? (int16_t)(y0 - y1) : (int16_t)(y1 - y0);
+  int16_t sy = (y0 < y1) ? 1 : -1;
+  int16_t err = (int16_t)(dx + dy);
+
+  for (;;)
+  {
+    if ((x0 >= 0) && (x0 < (int16_t)OLED_W) && (y0 >= 0) && (y0 < (int16_t)OLED_H))
+    {
+      fb_pixel((uint8_t)x0, (uint8_t)y0, 1);
+    }
+    if ((x0 == x1) && (y0 == y1))
+    {
+      break;
+    }
+    {
+      const int16_t e2 = (int16_t)(2 * err);
+      if (e2 >= dy)
+      {
+        err = (int16_t)(err + dy);
+        x0 = (int16_t)(x0 + sx);
+      }
+      if (e2 <= dx)
+      {
+        err = (int16_t)(err + dx);
+        y0 = (int16_t)(y0 + sy);
+      }
+    }
+  }
+}
+
+static uint16_t isqrt_u32(uint32_t value)
+{
+  uint32_t bit = 1UL << 30;
+  uint32_t result = 0;
+
+  while (bit > value)
+  {
+    bit >>= 2;
+  }
+  while (bit != 0U)
+  {
+    if (value >= (result + bit))
+    {
+      value -= result + bit;
+      result = (result >> 1) + bit;
+    }
+    else
+    {
+      result >>= 1;
+    }
+    bit >>= 2;
+  }
+  return (uint16_t)result;
+}
+
+static void draw_radar_arc(uint8_t radius)
+{
+  int16_t x;
+  int16_t last_x = 0;
+  int16_t last_y = 0;
+  uint8_t has_last = 0U;
+
+  for (x = (int16_t)(0 - radius); x <= (int16_t)radius; x++)
+  {
+    const uint32_t rr = (uint32_t)radius * (uint32_t)radius;
+    const uint32_t xx = (uint32_t)(x * x);
+    const int16_t y = (int16_t)isqrt_u32(rr - xx);
+    const int16_t px = (int16_t)(RADAR_SCOPE_CENTER_X + x);
+    const int16_t py = (int16_t)(RADAR_SCOPE_CENTER_Y + y);
+    if (has_last != 0U)
+    {
+      fb_line_i16(last_x, last_y, px, py);
+    }
+    last_x = px;
+    last_y = py;
+    has_last = 1U;
+  }
+}
+
+static int16_t clamp_i16_local(int16_t value, int16_t min_value, int16_t max_value)
+{
+  if (value < min_value)
+  {
+    return min_value;
+  }
+  if (value > max_value)
+  {
+    return max_value;
+  }
+  return value;
+}
+
+static void draw_radar_target(const RadarTarget *target)
+{
+  int16_t x;
+  int16_t y;
+
+  if ((target == NULL) || (target->valid == 0U) || (target->y_mm <= 0))
+  {
+    return;
+  }
+
+  y = (int16_t)(((int32_t)target->y_mm * (int32_t)RADAR_SCOPE_RADIUS) / RADAR_SCOPE_MAX_Y_MM);
+  y = clamp_i16_local(y, 2, (int16_t)(OLED_H - 1U));
+  x = (int16_t)(RADAR_SCOPE_CENTER_X +
+                (((int32_t)target->x_mm * (int32_t)RADAR_SCOPE_RADIUS) / RADAR_SCOPE_MAX_X_MM));
+  x = clamp_i16_local(x, 1, (int16_t)(OLED_W - 2U));
+
+  fb_pixel((uint8_t)x, (uint8_t)y, 1);
+  fb_line_i16((int16_t)(x - 2), y, (int16_t)(x + 2), y);
+  fb_line_i16(x, (int16_t)(y - 2), x, (int16_t)(y + 2));
 }
 
 static uint8_t glyph3x5(char c, uint8_t row)
@@ -234,7 +359,7 @@ void Display_Init(void)
   fb_flush();
 }
 
-void Display_ShowStatus(const char *state, uint32_t elapsed_ms)
+void Display_ShowStatusTime(const char *state, uint32_t elapsed_ms, const char *time_text)
 {
   char line[18];
   const uint32_t elapsed_s = elapsed_ms / 1000U;
@@ -244,7 +369,16 @@ void Display_ShowStatus(const char *state, uint32_t elapsed_ms)
   fb_text(0, 10, state);
   (void)snprintf(line, sizeof(line), "T%02lu:%02lu", elapsed_s / 60U, elapsed_s % 60U);
   fb_text(0, 20, line);
+  if ((time_text != NULL) && (time_text[0] != '\0'))
+  {
+    fb_text(0, 30, time_text);
+  }
   fb_flush();
+}
+
+void Display_ShowStatus(const char *state, uint32_t elapsed_ms)
+{
+  Display_ShowStatusTime(state, elapsed_ms, NULL);
 }
 
 void Display_ShowLineSensor(const uint16_t *frame, const AX_CCD_LineInfo *info, const char *state, uint16_t vin_x100, uint8_t battery_percent)
@@ -399,6 +533,59 @@ void Display_ShowRadar(const RadarSample *sample, RadarSide side, const char *st
   else
   {
     fb_text(0, 44, "UNKNOWN");
+  }
+
+  fb_flush();
+}
+
+void Display_ShowRadarScope(const RadarSample *sample, uint8_t avoid_flags, const char *time_text)
+{
+  char line[18];
+  uint8_t i;
+  uint8_t target_count = 0U;
+
+  fb_clear();
+
+  /* 避障时用扇形网格模拟雷达扫描视野，顶点对应车头正前方。 */
+  for (i = 1U; i <= RADAR_SCOPE_RINGS; i++)
+  {
+    draw_radar_arc((uint8_t)((RADAR_SCOPE_RADIUS * i) / RADAR_SCOPE_RINGS));
+  }
+  for (i = 0U; i <= 8U; i++)
+  {
+    fb_line_i16(RADAR_SCOPE_CENTER_X,
+                RADAR_SCOPE_CENTER_Y,
+                (int16_t)(RADAR_SCOPE_CENTER_X + radar_scope_endpoint_x[i]),
+                (int16_t)(OLED_H - 1U));
+  }
+
+  if (sample != NULL)
+  {
+    target_count = sample->target_count;
+    if (target_count > RADAR_MAX_TARGETS)
+    {
+      target_count = RADAR_MAX_TARGETS;
+    }
+    for (i = 0U; i < target_count; i++)
+    {
+      draw_radar_target(&sample->targets[i]);
+    }
+  }
+
+  fb_text(0, 0, "AVOID RADAR");
+  (void)snprintf(line, sizeof(line), "T%u F%02X", target_count, avoid_flags);
+  fb_text(0, 8, line);
+  if ((avoid_flags & RADAR_SCOPE_AVOIDING_FLAG) == 0U)
+  {
+    fb_text(92, 0, "SCAN");
+  }
+  else
+  {
+    fb_text(96, 0, "RUN");
+  }
+  if ((time_text != NULL) && (time_text[0] != '\0'))
+  {
+    fb_text(92, 8, time_text);
   }
 
   fb_flush();
