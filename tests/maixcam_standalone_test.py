@@ -278,7 +278,7 @@ class MaixcamStandaloneTest(unittest.TestCase):
             FakeBlob(82, 72, 14, 86),
             FakeBlob(224, 74, 14, 84),
         ])
-        telemetry = _telemetry(module, distance_mm=5200)
+        telemetry = _telemetry(module, distance_mm=11800)
         line = _line(module, center_x=160)
 
         events = []
@@ -290,6 +290,41 @@ class MaixcamStandaloneTest(unittest.TestCase):
         self.assertEqual([1], [event for event in events if event])
         self.assertEqual("locked", detector.state)
 
+    def test_gate_windows_match_left_track_mileage(self):
+        module = _load_main_module()
+        detector = module.VisionGateDetector()
+        img = FakeBlobImage([
+            FakeBlob(90, 80, 20, 40),
+            FakeBlob(210, 80, 20, 40),
+        ])
+        line = _line(module, center_x=160)
+
+        early = detector.detect(img, line, _telemetry(module, distance_mm=5200))
+        self.assertFalse(early.get("active"))
+
+        first_gate = detector.detect(img, line, _telemetry(module, distance_mm=11800))
+        self.assertTrue(first_gate.get("active"))
+
+        detector.count = 1
+        second_gate = detector.detect(img, line, _telemetry(module, distance_mm=21500))
+        self.assertTrue(second_gate.get("active"))
+
+    def test_zone_mileage_thresholds_follow_left_track_dimensions(self):
+        module = _load_main_module()
+        zone = module.ZonePlanner()
+
+        zone.update_from_telemetry(_telemetry(module, distance_mm=10300))
+        self.assertEqual(module.ZONE_S_CURVE, zone.zone)
+
+        zone.update_from_telemetry(_telemetry(module, distance_mm=14000))
+        self.assertEqual(module.ZONE_RECT_ZONE, zone.zone)
+
+        zone.update_from_telemetry(_telemetry(module, distance_mm=18000))
+        self.assertEqual(module.ZONE_CIRCLE_RECT, zone.zone)
+
+        zone.update_from_telemetry(_telemetry(module, distance_mm=21000))
+        self.assertEqual(module.ZONE_FINISH_APPROACH, zone.zone)
+
     def test_post_corridor_rejects_posts_that_do_not_contain_line_center(self):
         module = _load_main_module()
         detector = module.VisionGateDetector()
@@ -297,7 +332,7 @@ class MaixcamStandaloneTest(unittest.TestCase):
             FakeBlob(24, 72, 14, 86),
             FakeBlob(116, 74, 14, 84),
         ])
-        telemetry = _telemetry(module, distance_mm=5200)
+        telemetry = _telemetry(module, distance_mm=11800)
         line = _line(module, center_x=200)
 
         for now in (0, 120, 260, 430):
@@ -307,7 +342,7 @@ class MaixcamStandaloneTest(unittest.TestCase):
     def test_post_corridor_rejects_horizontal_or_single_post_shapes(self):
         module = _load_main_module()
         detector = module.VisionGateDetector()
-        telemetry = _telemetry(module, distance_mm=5200)
+        telemetry = _telemetry(module, distance_mm=11800)
         line = _line(module, center_x=160)
 
         horizontal = FakeBlobImage([FakeBlob(72, 118, 160, 12)])
@@ -326,10 +361,10 @@ class MaixcamStandaloneTest(unittest.TestCase):
             FakeBlob(224, 74, 14, 84),
         ])
         line = _line(module, center_x=160)
-        telemetry = _telemetry(module, distance_mm=5200)
+        telemetry = _telemetry(module, distance_mm=11800)
 
         events = []
-        for base, distance in ((0, 5200), (1800, 6400), (3600, 7800)):
+        for base, distance in ((0, 11800), (1800, 21500), (3600, 24500)):
             telemetry["distance_mm"] = distance
             events.append(detector.update(img, line, telemetry, base))
             events.append(detector.update(img, line, telemetry, base + 160))

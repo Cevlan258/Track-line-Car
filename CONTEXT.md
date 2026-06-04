@@ -51,13 +51,13 @@ MaixCAM -> STM32 命令帧包含 `MODE`、`FLAGS`、`ROUTE_STEP`、`CHECKPOINT_R
 
 当前区域按编码器里程粗分：
 
-- `BOOT`：0-450 mm，低速起步。
-- `DEAD`：450-2500 mm，强惩罚短死路和断头支线。
-- `MIRROR`：2500-4700 mm，固定左版地图，不再动态猜左右镜像。
-- `S`：4700-6100 mm，按连续路径和预瞄偏差通过 S 弯。
-- `RECT`：6100-8000 mm，允许直角，优先远端可延续且符合左版出口的路径。
-- `CIRCLE`：8000-10300 mm，惩罚闭环圆周，使用短时切线锁避免被圆吸住。
-- `FINISH`：10300 mm 后，低速寻找红色终点区，识别后发送停车。
+- `BOOT`：0-700 mm，低速起步。
+- `DEAD`：700-2500 mm，强惩罚短死路和断头支线。
+- `MIRROR`：2500-8200 mm，固定左版地图，不再动态猜左右镜像。
+- `S`：8200-13200 mm，按连续路径和预瞄偏差通过 S 弯。
+- `RECT`：13200-16500 mm，允许直角，优先远端可延续且符合左版出口的路径。
+- `CIRCLE`：16500-20500 mm，惩罚闭环圆周，使用短时切线锁避免被圆吸住。
+- `FINISH`：20500 mm 后，低速寻找红色终点区，识别后发送停车。
 
 左版地图核心常量：
 
@@ -127,15 +127,16 @@ tests\maix_link_protocol_test.c
 LoRa 配置已按 2026-06-08 场次 team22 左赛道要求更新：
 
 - 队伍：team22，队名 `CIRCUIT_VOYAGE`。
-- 左赛道参数：信道 `10`，模块地址 `0x0001`。
-- 模块参数：900 MHz 频段，透明传输模式，空中速率 2.4 kbps，网络 ID `0x00`，包长 240，中继/密钥关闭。
-- `LoRa_Init()` 会通过 `USART2` 发送 AT 指令写入参数，并切回 `AT+HMODE=1`。
-- `LoRa_SendCheckpoint()` 保持透明模式纯文本发送，不添加固定模式目标地址/信道前缀。
+- 模块型号：`EBYTE-EWT22A-900BWL22S` 测试套件，板载 `EWM22A-900BWL22S` 模组。
+- 左赛道参数：信道 `10`，本机地址 `0x0001`，目标地址 `0x0001`。
+- 模块参数：900MHz 频段，定点传输模式，空中速率 2.4 kbps，网络 ID `0x00`，包长 240，中继/密钥关闭。
+- `LoRa_Init()` 会通过 `USART2` 发送 EWM22A AT 指令写入参数，包括 `AT+HMODE=0`、`AT+TRANS=1`、`AT+ADDR`、`AT+CHANNEL`，并切回 `AT+HMODE=1`。
+- `LoRa_SendCheckpoint()` 会在纯文本消息前添加固定模式目标地址高字节、低字节和目标信道 3 字节前缀。
 
 当前未提交改动包括：
 
-- `App/Inc/app_config.h`、`App/Src/lora.c`：team22 左赛道 LoRa 参数，传输方式为 Transparent Mode。
-- `CONTEXT.md`：记录 team22 Transparent Mode LoRa 配置更新。
+- `App/Inc/app_config.h`、`App/Src/lora.c`：team22 左赛道 LoRa 参数，传输方式为 Fixed Mode。
+- `CONTEXT.md`：记录 team22 Fixed Mode LoRa 配置更新。
 - `App/Inc/app_uart.h`、`App/Src/app_uart.c`：接入 `HAL_UART_ErrorCallback()`，USART3 错误转交 MaixLink 恢复。
 - `App/Inc/maix_link.h`、`App/Src/maix_link.c`：新增 MaixCAM 串口错误恢复入口，清除 ORE 并重新启动 `HAL_UART_Receive_IT()`。
 - `App/Src/app_state.c`：记录故障原因，OLED 显示 `F LINK` 或 `F CMD`，便于区分 MaixCAM 断帧和主动故障命令。

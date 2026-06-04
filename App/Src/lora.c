@@ -10,6 +10,8 @@
 #define LORA_TX_DONE_TIMEOUT_MS 500U
 #define LORA_MODE_SWITCH_TIMEOUT_MS 1000U
 #define LORA_CONFIG_TIMEOUT_MS 300U
+#define LORA_FIXED_PREFIX_LEN 3U
+#define LORA_PAYLOAD_MAX_LEN 96U
 #define LORA_HMODE_CONFIG "AT+HMODE=0"
 #define LORA_HMODE_UART_LORA "AT+HMODE=1"
 
@@ -72,7 +74,7 @@ static HAL_StatusTypeDef lora_apply_config(void)
     return ret;
   }
 
-  ret = lora_send_u32_command("AT+RATE=", APP_LORA_AIR_RATE_2K4);
+  ret = lora_send_u32_command("AT+RATE=", APP_LORA_AIR_RATE);
   if (ret != HAL_OK)
   {
     return ret;
@@ -84,13 +86,13 @@ static HAL_StatusTypeDef lora_apply_config(void)
     return ret;
   }
 
-  ret = lora_send_u32_command("AT+PACKET=", APP_LORA_PACKET_240_BYTES);
+  ret = lora_send_u32_command("AT+PACKET=", APP_LORA_PACKET_LENGTH);
   if (ret != HAL_OK)
   {
     return ret;
   }
 
-  ret = lora_send_u32_command("AT+TRANS=", APP_LORA_TRANSPARENT_MODE);
+  ret = lora_send_u32_command("AT+TRANS=", APP_LORA_FIXED_MODE);
   if (ret != HAL_OK)
   {
     return ret;
@@ -130,7 +132,8 @@ void LoRa_Init(void)
 
 HAL_StatusTypeDef LoRa_SendCheckpoint(uint8_t checkpoint, uint32_t elapsed_ms)
 {
-  char msg[96];
+  uint8_t packet[LORA_FIXED_PREFIX_LEN + LORA_PAYLOAD_MAX_LEN];
+  char *msg = (char *)&packet[LORA_FIXED_PREFIX_LEN];
   char time_buf[9];
   HAL_StatusTypeDef ret;
   const uint32_t elapsed_s = elapsed_ms / 1000U;
@@ -139,7 +142,7 @@ HAL_StatusTypeDef LoRa_SendCheckpoint(uint8_t checkpoint, uint32_t elapsed_ms)
 
   AppTime_GetBeijingTime(time_buf, sizeof(time_buf));
 
-  const int len = snprintf(msg, sizeof(msg),
+  const int len = snprintf(msg, LORA_PAYLOAD_MAX_LEN,
                            "TEAM=%s;NAME=%s;TIME=%s;POINT=2.%u;ELAPSED=%02lu:%02lu\r\n",
                            APP_TEAM_ID,
                            APP_TEAM_NAME,
@@ -152,6 +155,15 @@ HAL_StatusTypeDef LoRa_SendCheckpoint(uint8_t checkpoint, uint32_t elapsed_ms)
   {
     return HAL_ERROR;
   }
+  if ((size_t)len >= LORA_PAYLOAD_MAX_LEN)
+  {
+    return HAL_ERROR;
+  }
+
+  /* EBYTE fixed mode prefix: target address high byte, low byte, and channel. */
+  packet[0] = (uint8_t)((APP_LORA_TARGET_ADDRESS >> 8U) & 0xFFU);
+  packet[1] = (uint8_t)(APP_LORA_TARGET_ADDRESS & 0xFFU);
+  packet[2] = (uint8_t)(APP_LORA_CHANNEL & 0xFFU);
 
   ret = lora_wait_ready(LORA_READY_TIMEOUT_MS);
   if (ret != HAL_OK)
@@ -159,7 +171,7 @@ HAL_StatusTypeDef LoRa_SendCheckpoint(uint8_t checkpoint, uint32_t elapsed_ms)
     return ret;
   }
 
-  ret = HAL_UART_Transmit(&huart2, (uint8_t *)msg, (uint16_t)strlen(msg), 100U);
+  ret = HAL_UART_Transmit(&huart2, packet, (uint16_t)(LORA_FIXED_PREFIX_LEN + (size_t)len), 100U);
   if (ret != HAL_OK)
   {
     return ret;
