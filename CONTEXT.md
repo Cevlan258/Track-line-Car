@@ -81,9 +81,11 @@ ctest --test-dir build/host -C Debug --output-on-failure
 
 ## 本次整理与同步
 
+交付状态：目录与文档重构提交 `6e24942` 已同步 GitHub `main`；远端中英文 README 与本地内容一致，主页 HTML 已返回正确的标题、表格和 Mermaid 代码块，About 简介及 9 个技术主题已更新。原始本地检出已合入并再次通过 Python、宿主 C、Debug/Release 构建验证。
+
 - 以远端 `99f4be2` 为基础，保留此前 5 个删除提交的历史；在固件目录恢复仍被构建引用的启动汇编和链接脚本，并归档被删除的资料。
 - 原 `.clangd` 本地格式修改已随文件迁移保留；旧 `CONTEXT.md` 中过期路径、同步状态和工具绝对路径已被本文件更新。
-- 原始本地文件另存于原检出 `.git/showcase-backup-20260921/`，不提交远端。
+- 原始本地文件另存于原检出 `.git/showcase-backup-20260921/`，包括旧构建目录和原 MaixCAM 目录；原 `.clangd` / `CONTEXT.md` 修改也保留了一份 Git stash，不提交远端。
 - Python 缓存、应用 ZIP 和构建产物不再跟踪；保留第三方许可证，没有为自有代码新增许可证。
 - 用户已授权验证后以普通提交同步 `main`，保留仓库名称与 URL，补充 GitHub 简介和主题；不使用强制推送。
 
