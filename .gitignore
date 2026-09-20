@@ -1,3 +1,10 @@
-build
+# 构建、缓存与本地工具配置
+build/
+__pycache__/
+*.py[cod]
+.cache/
+CMakeUserPresets.json
 mx.scratch
-!.settings
+
+# MaixCAM 打包产物
+vision/maixcam/dist/

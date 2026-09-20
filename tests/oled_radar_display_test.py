@@ -3,9 +3,9 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-APP_STATE_C = PROJECT_ROOT / "App" / "Src" / "app_state.c"
-DISPLAY_C = PROJECT_ROOT / "App" / "Src" / "display_ssd1309.c"
-DISPLAY_H = PROJECT_ROOT / "App" / "Inc" / "display_ssd1309.h"
+APP_STATE_C = PROJECT_ROOT / "firmware" / "stm32" / "App" / "Src" / "app_state.c"
+DISPLAY_C = PROJECT_ROOT / "firmware" / "stm32" / "App" / "Src" / "display_ssd1309.c"
+DISPLAY_H = PROJECT_ROOT / "firmware" / "stm32" / "App" / "Inc" / "display_ssd1309.h"
 
 
 class OledRadarDisplayTest(unittest.TestCase):

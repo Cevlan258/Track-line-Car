@@ -1,5 +1,7 @@
 # OpenMV 巡线协议
 
+历史方案说明见 [README](README.md)；当前固件使用 [MaixCAM 协议](../../docs/maixcam_protocol.md)。
+
 ## 硬件连接
 
 - OpenMV `P4/TX` -> STM32 `PB11/USART3_RX`

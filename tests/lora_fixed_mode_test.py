@@ -7,7 +7,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 class LoraFixedModeTest(unittest.TestCase):
     def test_config_matches_team22_ewt22a_left_track_schedule(self):
-        config = (PROJECT_ROOT / "App" / "Inc" / "app_config.h").read_text(encoding="utf-8")
+        config = (PROJECT_ROOT / "firmware" / "stm32" / "App" / "Inc" / "app_config.h").read_text(encoding="utf-8")
 
         self.assertIn('#define APP_LORA_MODEL "EBYTE-EWT22A-900BWL22S"', config)
         self.assertIn('#define APP_TEAM_ID "22"', config)
@@ -24,7 +24,7 @@ class LoraFixedModeTest(unittest.TestCase):
         self.assertNotIn('APP_LORA_TRANSPARENT_MODE', config)
 
     def test_lora_init_configures_fixed_mode(self):
-        source = (PROJECT_ROOT / "App" / "Src" / "lora.c").read_text(encoding="utf-8")
+        source = (PROJECT_ROOT / "firmware" / "stm32" / "App" / "Src" / "lora.c").read_text(encoding="utf-8")
 
         self.assertIn('#define LORA_HMODE_CONFIG "AT+HMODE=0"', source)
         self.assertIn('#define LORA_HMODE_UART_LORA "AT+HMODE=1"', source)
@@ -34,7 +34,7 @@ class LoraFixedModeTest(unittest.TestCase):
         self.assertNotIn("AT+MODE=", source)
 
     def test_checkpoint_packet_uses_fixed_mode_prefix(self):
-        source = (PROJECT_ROOT / "App" / "Src" / "lora.c").read_text(encoding="utf-8")
+        source = (PROJECT_ROOT / "firmware" / "stm32" / "App" / "Src" / "lora.c").read_text(encoding="utf-8")
 
         self.assertIn("LORA_FIXED_PREFIX_LEN", source)
         self.assertIn("packet[0] = (uint8_t)((APP_LORA_TARGET_ADDRESS >> 8U) & 0xFFU);", source)
@@ -44,7 +44,7 @@ class LoraFixedModeTest(unittest.TestCase):
 
     def test_docs_reference_ewt22a_not_old_lr22_model(self):
         context = (PROJECT_ROOT / "CONTEXT.md").read_text(encoding="utf-8")
-        requirements = (PROJECT_ROOT / "需求.md").read_text(encoding="utf-8")
+        requirements = (PROJECT_ROOT / "docs" / "archive" / "需求.md").read_text(encoding="utf-8")
         combined = context + "\n" + requirements
 
         self.assertIn("EBYTE-EWT22A-900BWL22S", combined)

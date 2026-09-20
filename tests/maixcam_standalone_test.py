@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MAIN_PY = PROJECT_ROOT / "maixcam" / "main.py"
+MAIN_PY = PROJECT_ROOT / "vision" / "maixcam" / "main.py"
 
 
 def _load_tree():

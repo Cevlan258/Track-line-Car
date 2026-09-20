@@ -6,7 +6,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def read_source(relative_path):
-    return (PROJECT_ROOT / relative_path).read_text(encoding="utf-8")
+    return (PROJECT_ROOT / "firmware" / "stm32" / relative_path).read_text(encoding="utf-8")
 
 
 class Stm32InnerWheelSlowdownTest(unittest.TestCase):

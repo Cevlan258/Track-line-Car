@@ -1,5 +1,7 @@
 # MaixCAM-Pro 主控协议
 
+[返回主页](../README.md) · [当前架构](architecture.md) · [硬件连接](hardware.md)
+
 本协议用于替代旧 OpenMV 感知帧。MaixCAM-Pro 负责视觉巡线、路线推进、路口选择、拱门识别、终点判断和避障决策；STM32 负责电机闭环、舵机、电池检测、LoRa、RTC、雷达原始解析和安全停车。
 
 ## 硬件连接
@@ -84,9 +86,9 @@ STM32 安全策略：
 MaixCAM-Pro：
 
 - 使用 MaixPy `camera.Camera(...)` 取图。
-- 使用 `find_blobs` / `get_regression` 类图像算法做多 ROI 巡线。
+- 使用 `find_blobs` 提取多扫描带候选，经路径连接和评分进行巡线。
 - 正式比赛固定使用左版地图，路线评分不再动态猜测左右镜像。
-- 推进路线表 `1.1 -> 1.2 -> 1.3 -> 1.4 -> 1.5`，`ROUTE_STEP` 仅表示当前区域/阶段诊断。
+- 根据里程推进 `BOOT / DEAD / MIRROR / S / RECT / CIRCLE / FINISH` 区域；`ROUTE_STEP` 用于阶段诊断。
 - 使用 MaixCAM 图像中的左右立柱走廊识别 2.1/2.2 拱门；横梁可见时只提高置信度，不作为必要条件。
 - 根据 STM32 遥测中的 24 GHz 雷达目标只做任务 3 障碍箱金属板侧别判断和避障侧选择。
 - 通过命令帧直接下发 `vx_mm_s` 和 `yaw`。
